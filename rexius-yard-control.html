@@ -55,7 +55,6 @@ button,input,select,textarea{font:inherit;color:inherit}
 .syncpill.bad i{background:var(--rust)}
 .syncpill.off i{background:#4A5C50}
 @keyframes pulse{50%{opacity:.3}}
-.syncpill b{color:var(--white);font-weight:400}
 .note-strip{background:#FBF0EC;border:1px solid #E0BEB4;border-left:4px solid var(--rust);
   padding:12px 16px;margin-bottom:18px;border-radius:2px;font-size:13.5px}
 .note-strip b{font-family:var(--cond);text-transform:uppercase;letter-spacing:.13em;font-size:12px}
@@ -479,16 +478,15 @@ td.r,th.r{text-align:right}
       </div>
       <div class="card" style="max-width:640px">
         <h2>Backup</h2>
-        <p style="font-size:13.5px;margin:0 0 14px">Downloads one JSON file holding every lot, event, and saved name.</p>
+        <p style="font-size:13.5px;margin:0 0 14px">Downloads one JSON file holding every lot, event, job,
+          and saved name. Records live in this browser only, so this file is the safety net —
+          take one at the end of any day worth keeping.</p>
         <div class="row"><button class="btn" id="d-export">Download backup</button>
           <button class="btn ghost" id="d-import">Restore from backup</button>
           <input type="file" id="d-file" accept="application/json" style="display:none"></div>
         <h2 style="margin-top:26px">Spreadsheet snapshot</h2>
         <p style="font-size:13.5px;margin:0 0 14px" id="d-srcnote"></p>
         <button class="btn ghost" id="d-seed">Reload the snapshot</button>
-        <h2 style="margin-top:26px">Start over</h2>
-        <p style="font-size:13.5px;margin:0 0 14px">Erases everything, permanently. Back up first.</p>
-        <button class="btn danger" id="d-wipe">Erase all records</button>
         <div id="d-status" class="hint" style="margin-top:16px"></div>
       </div>
     </section>
@@ -518,6 +516,27 @@ td.r,th.r{text-align:right}
      plant : a saved name for fast entry.
    Quantities are never edited silently — every change writes an event,
    so the chain of custody survives reallocation.
+   ===================================================================== */
+
+/* =====================================================================
+   ↓↓↓  SUPABASE — PUT YOUR PROJECT DETAILS HERE  ↓↓↓
+
+   Fill these two in and every device that opens this file connects on its
+   own. Leave them empty and the app asks once per device on the Data tab.
+
+   From your Supabase dashboard:
+     Settings → API → Project URL
+     Settings → API → Project API keys → anon public
+   Use the anon public key. Never service_role — that one ignores every
+   rule in the database.
+
+   Anyone who can open this file can read and write the whole yard, so keep
+   it on crew devices and off public links and repos.
+   ===================================================================== */
+const SUPABASE_URL = 'https://tjrjcjkyrewsrfxsjaqb.supabase.co';        // e.g. 'https://abcdefghijkl.supabase.co'
+const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InRqcmpjamt5cmV3c3JmeHNqYXFiIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODcxNjM3NTgsImV4cCI6MjEwMjczOTc1OH0.62bmGbWZirKKtdSIOG4Jcv0DI_8HpliKtOT9v26jTZc';   // e.g. 'eyJhbGciOiJIUzI1NiIsInR5cCI6...'
+/* =====================================================================
+   ↑↑↑  nothing below here needs editing  ↑↑↑
    ===================================================================== */
 
 const KEY = 'rexius:yard:v1';
@@ -798,7 +817,7 @@ function transfer(lot, qty, toJob, toLoc, date, note){
   outbox({kind:'lot', lot:child},
     {kind:'move', lot_id:lot.id, d_qty:-qty, event:evP},
     {kind:'move', lot_id:child.id, event:evC});
-  if(toJob && toJob !== HOLD) DB.jobs = uniqSorted(DB.jobs.concat(toJob));
+  ensureJob(toJob);
   if(toLoc) DB.locs = uniqSorted(DB.locs.concat(toLoc));
   save(); return child;
 }
@@ -873,8 +892,8 @@ function rememberPlant(bot, com, size, cult){
 /* =====================================================================
    SUPABASE SYNC
    The yard has patchy signal, so the device is always the thing you work
-   against and the server is caught up afterwards. Every change is queued
-   as an operation; the queue drains when there is a connection.
+   against and the server is caught up behind it. Every change queues the
+   moment it is made and drains on its own — nobody presses anything.
 
    Two rules keep the books straight when several people are out at once:
      * Movements travel as deltas ("30 fewer"), never as totals, so two
@@ -883,7 +902,7 @@ function rememberPlant(bot, com, size, cult){
        applies it only if that entry is new, so a retry after a dropped
        connection can never double-count.
    ===================================================================== */
-const SYNC = {busy:false, last:'', err:'', timer:null, online:navigator.onLine};
+const SYNC = {busy:false, last:'', err:'', timer:null};
 
 function sb(){ return DB.sb || (DB.sb = BLANK().sb); }
 function sbOn(){ const s = sb(); return !!(s.url && s.key); }
@@ -895,6 +914,14 @@ function deviceId(){
 function outbox(...ops){
   if(!DB.outbox) DB.outbox = [];
   ops.forEach(o => DB.outbox.push(o));
+  scheduleSync();
+}
+/* A change just landed. Push it in a moment, once the burst settles. */
+let pushSoon = null;
+function scheduleSync(){
+  if(!sbOn()) return;
+  clearTimeout(pushSoon);
+  pushSoon = setTimeout(() => { if(navigator.onLine) syncNow(true); }, 2500);
 }
 
 async function rpc(name, args, ms){
@@ -919,20 +946,20 @@ async function rest(path, rows){
   const r = await fetch(`${s.url.replace(/\/+$/,'')}/rest/v1/${path}`, {
     method:'POST',
     headers:{'apikey': s.key, 'Authorization': 'Bearer ' + s.key,
-             'Content-Type':'application/json', 'Prefer':'resolution=merge-duplicates,return=minimal'},
+             'Content-Type':'application/json',
+             'Prefer':'resolution=merge-duplicates,return=minimal'},
     body: JSON.stringify(rows)
   });
   if(!r.ok) throw new Error(`${r.status} ${(await r.text()).slice(0,180)}`);
 }
 
 /* ---------- lot codes ----------
-   Devices draw from a reserved block of numbers, so a tag printed with no
-   signal still carries a code no other device will ever hand out. */
+   Devices draw from a reserved block, so a tag printed with no signal
+   still carries a code no other device will ever hand out. */
 async function topUpCodes(force){
   const s = sb();
   if(!sbOn()) return;
-  const left = s.block.end - s.block.next;
-  if(!force && left > 50) return;
+  if(!force && s.block.end - s.block.next > 50) return;
   const start = await rpc('rx_reserve_codes', {p_count: 250});
   s.block = {next: Number(start), end: Number(start) + 249};
   save();
@@ -944,8 +971,7 @@ function nextCode(){
       const n = s.block.next++; save();
       return 'RX-' + String(n).padStart(4,'0');
     }
-    // Block ran dry with no signal. Stamp the device on so it stays unique.
-    DB.seq += 1;
+    DB.seq += 1;                       // block ran dry offline
     return 'RX-' + deviceId() + String(DB.seq).padStart(3,'0');
   }
   DB.seq += 1;
@@ -978,12 +1004,12 @@ function opForWire(o){
   return w;
 }
 
-/* ---------- the sync cycle: push what we owe, then take what is new ---------- */
+/* ---------- push what we owe, then take what is new ---------- */
 async function syncNow(quiet){
   if(SYNC.busy || !sbOn()) return false;
+  if(!sb().uploaded){ return false; }     // nothing up there to sync against yet
   SYNC.busy = true; SYNC.err = ''; renderSyncUI();
   try{
-    // push in batches so a big backlog does not time out
     while(DB.outbox.length){
       const batch = DB.outbox.slice(0, 150);
       const res = await rpc('rx_push', {p_ops: batch.map(opForWire)});
@@ -993,7 +1019,6 @@ async function syncNow(quiet){
       if(short && !quiet)
         toast(`${short} lot${short>1?'s':''} went short on the server — check Needs attention`, 'bad');
     }
-    // pull everything changed since last time
     const s = sb();
     const got = await rpc('rx_pull', {p_since: s.since, p_limit: 5000});
     let n = 0;
@@ -1035,7 +1060,7 @@ async function syncNow(quiet){
   }
 }
 
-/* ---------- first upload ---------- */
+/* ---------- one-time seeding of a fresh project ---------- */
 async function uploadAll(onProgress){
   const s = sb();
   onProgress('Checking the connection');
@@ -1073,8 +1098,8 @@ function startSyncLoop(){
   if(!sbOn()) return;
   SYNC.timer = setInterval(() => { if(navigator.onLine) syncNow(true); }, 45000);
 }
-window.addEventListener('online',  () => { SYNC.online = true;  renderSyncUI(); syncNow(true); });
-window.addEventListener('offline', () => { SYNC.online = false; renderSyncUI(); });
+window.addEventListener('online',  () => { renderSyncUI(); syncNow(true); });
+window.addEventListener('offline', () => renderSyncUI());
 
 /* =====================================================================
    DERIVED FIGURES
@@ -1199,6 +1224,7 @@ function renderSyncUI(){
   const s = sb(), pend = (DB.outbox||[]).length;
   let cls, txt;
   if(!sbOn())               { cls='off';  txt='Local only'; }
+  else if(!s.uploaded)      { cls='bad';  txt='Setup unfinished'; }
   else if(SYNC.busy)        { cls='busy'; txt='Syncing…'; }
   else if(!navigator.onLine){ cls='bad';  txt = pend ? `Offline · ${n0(pend)} waiting` : 'Offline'; }
   else if(SYNC.err)         { cls='bad';  txt='Sync problem'; }
@@ -1214,9 +1240,9 @@ function renderSbPanel(){
   const s = sb(), pend = (DB.outbox||[]).length;
   if(!sbOn()){
     box.innerHTML = `
-      <p style="font-size:13.5px;margin:0 0 14px">Right now everything lives in this browser
-        alone. Point the app at a Supabase project and the whole crew works off the same yard,
-        with each device holding its own copy so a dead spot in the back beds never stops anyone.</p>
+      <p style="font-size:13.5px;margin:0 0 14px">Right now everything lives in this browser alone.
+        Point the app at a Supabase project and every action records itself there as it happens —
+        the whole crew works off one yard, and nothing has to be uploaded at the end of the day.</p>
       <label class="f"><span>Project URL</span>
         <input type="text" id="sb-url" class="mono" placeholder="https://xxxxxxxx.supabase.co"></label>
       <label class="f"><span>Anon public key</span>
@@ -1231,43 +1257,76 @@ function renderSbPanel(){
     return;
   }
   const host = s.url.replace(/^https?:\/\//,'').replace(/\/.*$/,'');
+  const baked = !!(SUPABASE_URL && SUPABASE_ANON_KEY);
+
+  // Seeding a fresh project is a one-off. Once it is done the button goes away.
+  if(!s.uploaded){
+    box.innerHTML = `
+      <div class="note-strip" style="background:#F9F2E6;border-color:#DEC79B;border-left-color:var(--bark)">
+        <b>One thing left</b><br>Connected to ${esc(host)}, but the yard on this device has never
+        been sent up. Do this once, from the machine holding the good data, before anyone else
+        connects. After that everything records itself and this step is gone for good.</div>
+      <div class="row">
+        <button class="btn go" id="sb-upload">First-time setup — send this yard up</button>
+        <button class="btn ghost" id="sb-check">Check the server again</button>
+        ${baked?'':`<button class="btn ghost" id="sb-forget">Disconnect</button>`}
+      </div>
+      <div id="sb-prog" class="hint" style="margin-top:12px"></div>`;
+    wireSbButtons(); return;
+  }
+
   box.innerHTML = `
     <div class="grid g2" style="gap:10px;margin-bottom:14px">
       ${[['Project', host], ['This device', deviceId()],
          ['Waiting to send', pend ? n0(pend) + ' changes' : 'nothing'],
          ['Last sync', SYNC.last ? new Date(SYNC.last).toLocaleTimeString() : 'not yet'],
-         ['Lot numbers held', s.block.end >= s.block.next
-            ? `${s.block.next}–${s.block.end}` : 'none reserved'],
+         ['Lot numbers held', s.block.end >= s.block.next ? `${s.block.next}–${s.block.end}` : 'none'],
          ['Connection', navigator.onLine ? 'online' : 'offline']
         ].map(([k,v]) => `<div><span class="lab" style="display:block">${k}</span>
           <span class="num" style="font-size:14px">${esc(v)}</span></div>`).join('')}
     </div>
     ${SYNC.err ? `<div class="note-strip"><b>Last sync failed</b><br>${esc(SYNC.err)}</div>` : ''}
-    ${!s.uploaded ? `<div class="note-strip" style="background:#F9F2E6;border-color:#DEC79B;border-left-color:var(--bark)">
-      <b>Nothing uploaded yet</b><br>The yard on this device has not been sent to Supabase.
-      Do that once, from the machine holding the good data, before anyone else connects.</div>` : ''}
+    <p class="hint" style="margin:0 0 12px">Every action records itself as it happens. The button is
+      only here for when you want to force it.</p>
     <div class="row">
       <button class="btn go" id="sb-sync" ${SYNC.busy?'disabled':''}>Sync now</button>
-      <button class="btn" id="sb-upload" ${SYNC.busy?'disabled':''}>Upload this yard</button>
       <button class="btn ghost" id="sb-replace" ${SYNC.busy?'disabled':''}>Replace from server</button>
-      <button class="btn ghost" id="sb-forget">Disconnect</button>
+      ${baked?'':`<button class="btn ghost" id="sb-forget">Disconnect</button>`}
     </div>
-    <div id="sb-prog" class="hint" style="margin-top:12px"></div>`;
+    <div id="sb-prog" class="hint" style="margin-top:12px">${baked
+      ? 'Connected from the details written into this file.' : ''}</div>`;
+  wireSbButtons();
+}
 
-  $('#sb-sync').onclick = () => syncNow(false);
-  $('#sb-upload').onclick = async () => {
-    if(!confirm(`Send ${n0(DB.lots.length)} lots, ${n0(DB.events.length)} events and ${n0(DB.arch.length)} archive rows to Supabase?\n\nRun this from one machine only. Records already up there keep their own values.`)) return;
+function wireSbButtons(){
+  const s = sb(), pend = (DB.outbox||[]).length;
+  const on = (id, fn) => { const el = $(id); if(el) el.onclick = fn; };
+
+  on('#sb-sync', () => syncNow(false));
+  on('#sb-check', async () => {
+    try{
+      const stats = await rpc('rx_stats');
+      if(Number(stats.lots) > 0){
+        s.uploaded = true; save();
+        toast(`${n0(stats.lots)} lots already up there — syncing`);
+        await syncNow(false);
+      } else toast('Still empty up there', 'bad');
+      renderAll();
+    }catch(e){ toast('Could not reach the project', 'bad'); }
+  });
+  on('#sb-upload', async () => {
+    if(!confirm(`Send ${n0(DB.lots.length)} lots, ${n0(DB.events.length)} events and ${n0(DB.arch.length)} archive rows to Supabase?\n\nThis is a one-time step. Run it from this machine only.`)) return;
     const p = $('#sb-prog'); SYNC.busy = true; renderSyncUI();
     try{
-      const n = await uploadAll(m => p.textContent = m);
-      p.textContent = `Uploaded ${n0(n)} records.`;
-      toast('Yard uploaded to Supabase');
+      const n = await uploadAll(m => { if($('#sb-prog')) $('#sb-prog').textContent = m; });
+      toast(`Setup done — ${n0(n)} records up. Everything syncs on its own from here.`);
+      startSyncLoop();
     }catch(e){
-      p.textContent = 'Upload failed — ' + String(e.message||e).slice(0,160);
+      if($('#sb-prog')) $('#sb-prog').textContent = 'Upload failed — ' + String(e.message||e).slice(0,160);
       toast('Upload failed', 'bad');
     }finally{ SYNC.busy = false; renderSyncUI(); renderAll(); }
-  };
-  $('#sb-replace').onclick = async () => {
+  });
+  on('#sb-replace', async () => {
     if(pend && !confirm(`${n0(pend)} changes on this device have not been sent yet. They will be lost. Continue?`)) return;
     if(!confirm('Throw away the copy on this device and take a fresh one from Supabase?')) return;
     const keepSb = Object.assign({}, s, {since:'1970-01-01T00:00:00Z'});
@@ -1275,12 +1334,12 @@ function renderSbPanel(){
     DB = BLANK(); DB.sb = keepSb; DB.arch = arch; DB.src = src;
     await syncNow(false); migrateJobs(); renderAll();
     toast('Copied fresh from Supabase');
-  };
-  $('#sb-forget').onclick = () => {
+  });
+  on('#sb-forget', () => {
     if(!confirm('Stop syncing and go back to this browser only? The records stay on this device and in Supabase.')) return;
     DB.sb = BLANK().sb; clearInterval(SYNC.timer); save(); renderAll();
     toast('Disconnected — local only');
-  };
+  });
 }
 
 async function connectSb(){
@@ -1288,33 +1347,26 @@ async function connectSb(){
   const key = $('#sb-key').value.trim();
   const err = $('#sb-err');
   const fail = m => { err.textContent = m; err.classList.add('on'); };
-  if(!/^https:\/\/[\w.-]+\.supabase\.(co|in)$/i.test(url) && !/^https:\/\//.test(url))
-    return fail('That does not look like a project URL. It should look like https://abcdefgh.supabase.co');
+  if(!/^https:\/\//.test(url))
+    return fail('That should look like https://abcdefgh.supabase.co');
   if(!key) return fail('Paste the anon public key.');
-  if(/service_role/i.test(key) || key.includes('"role":"service_role"'))
+  if(/service_role/i.test(key))
     return fail('That is the service_role key. Use the anon public key — the other one bypasses every database rule.');
   err.classList.remove('on');
   const s = sb(); s.url = url; s.key = key; deviceId();
   try{
     const stats = await rpc('rx_stats', {}, 15000);
-    save();
     const remote = Number(stats.lots) || 0;
-    if(remote === 0 && DB.lots.length){
-      s.uploaded = false;
-      toast('Connected — nothing up there yet, so upload this yard');
-    } else if(remote > 0){
-      s.uploaded = true;
-      await syncNow(false);
-      toast(`Connected — ${n0(remote)} lots on the server`);
-    } else {
-      s.uploaded = true; toast('Connected');
-    }
+    s.uploaded = remote > 0;
+    save();
+    if(remote > 0){ await syncNow(false); toast(`Connected — ${n0(remote)} lots on the server`); }
+    else toast('Connected — one setup step left');
     await topUpCodes(true);
     startSyncLoop(); save(); renderAll();
   }catch(e){
     const m = String(e.message||e);
     s.url = ''; s.key = '';
-    fail(/rx_stats|404|PGRST/i.test(m)
+    fail(/404|PGRST|rx_stats/i.test(m)
       ? 'Reached the project, but the yard tables are missing. Run the schema file in the SQL editor first.'
       : 'Could not reach the project — ' + m.slice(0,140));
     renderAll();
@@ -2296,7 +2348,7 @@ function wire(){
     };
     r.readAsText(f); e.target.value = '';
   };
-  $('#syncpill').onclick = () => { go('data'); if(sbOn()) syncNow(false); };
+  $('#syncpill').onclick = () => { go('data'); if(sbOn() && sb().uploaded) syncNow(false); };
   $('#syncpill').onkeydown = e => { if(e.key === 'Enter' || e.key === ' ') $('#syncpill').onclick(); };
   $('#d-srcnote').textContent = DB.src
     ? `Loaded from ${DB.src}. Reloading replaces everything currently in the app with that snapshot again — your own receiving and shipping since then would be lost.`
@@ -2306,13 +2358,6 @@ function wire(){
     if(hydrate(true)){ renderAll(); go('board'); toast('Snapshot reloaded'); }
     else toast('No snapshot found in this file', 'bad');
   };
-  $('#d-wipe').onclick = () => {
-    if(!confirm('Erase every lot, event, and saved name? This cannot be undone.')) return;
-    if(!confirm('Last check — this permanently deletes your records. Continue?')) return;
-    DB = BLANK();
-    save(); renderAll(); $('#d-status').textContent = 'All records erased.';
-  };
-
   // drawer
   $('#dclose').onclick = closeDrawer;
   $('#scrim').onclick = closeDrawer;
@@ -2326,6 +2371,12 @@ function wire(){
   await load();
   if(!DB.outbox) DB.outbox = [];
   if(!DB.sb) DB.sb = BLANK().sb;
+  if(SUPABASE_URL && SUPABASE_ANON_KEY &&
+     (DB.sb.url !== SUPABASE_URL || DB.sb.key !== SUPABASE_ANON_KEY)){
+    DB.sb.url = SUPABASE_URL.replace(/\/+$/,'');
+    DB.sb.key = SUPABASE_ANON_KEY;
+    deviceId(); save();
+  }
   hydrate(false);
   migrateJobs();
   wire(); previewTag(); go('board');
