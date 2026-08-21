@@ -595,7 +595,7 @@ const SIGNIN_SUFFIX = '@rexius.com';
 
 /* Shown in the bottom corner and on the Data tab. If the version on screen is
    not the one you just uploaded, the browser is serving an older copy. */
-const BUILD = '2026-08-21-g';
+const BUILD = '2026-08-21-h';
 /* =====================================================================
    ↑↑↑  nothing below here needs editing  ↑↑↑
    ===================================================================== */
@@ -1008,17 +1008,20 @@ function netError(e, where){
   return m;
 }
 
-async function authFetch(path, body, token){
+async function authFetch(path, body, token, ms){
   const s = sb();
+  const ctl = new AbortController();
+  const timer = setTimeout(() => ctl.abort(), ms || 20000);
   let r;
   try{
     r = await fetch(`${s.url.replace(/\/+$/,'')}/auth/v1/${path}`, {
-      method:'POST',
+      method:'POST', signal: ctl.signal,
       headers:{'apikey': s.key, 'Content-Type':'application/json',
                'Authorization': 'Bearer ' + (token || s.key)},
       body: JSON.stringify(body || {})
     });
-  }catch(e){ throw new Error(netError(e, 'The sign-in service')); }
+  }catch(e){ throw new Error(netError(e, 'The sign-in service'));
+  }finally{ clearTimeout(timer); }
   const txt = await r.text();
   let data = {}; try{ data = txt ? JSON.parse(txt) : {}; }catch(e){}
   if(!r.ok){
@@ -1059,12 +1062,19 @@ async function freshToken(){
   return a.access;
 }
 
-async function signOut(){
+/* Ending the session on this device must not wait on anything. The token is
+   dropped first; revoking it upstream is a courtesy that happens afterwards
+   and cannot hold the button hostage — signing out has to work with no
+   signal at all. */
+function signOut(){
   const a = auth();
-  try{ if(a.access) await authFetch('logout', {}, a.access); }catch(e){}
+  const token = a.access;
   a.access = ''; a.refresh = ''; a.exp = 0; a.email = '';
   clearInterval(SYNC.timer);
+  SYNC.err = ''; SYNC.remote = null;
   save();
+  if(token && navigator.onLine)
+    authFetch('logout', {}, token, 6000).catch(() => {});
 }
 
 function sb(){ return DB.sb || (DB.sb = BLANK().sb); }
@@ -1332,6 +1342,16 @@ function renderNav(){
   $$('#nav button').forEach(b => b.onclick = () => go(b.dataset.v));
 }
 function renderFoot(){
+  const who = auth().email;
+  if(who){
+    $('#railfoot').innerHTML =
+      `<b>${esc(shortName(who))}</b> · <a href="#" id="rail-out"
+        style="color:var(--rex);text-decoration:underline">sign out</a>`
+      + `<br><span style="opacity:.65">build ${BUILD}</span>`;
+    const out = $('#rail-out');
+    if(out) out.onclick = e => { e.preventDefault(); doSignOut(); };
+    return;
+  }
   $('#railfoot').innerHTML = (memoryOnly
     ? `<b style="color:var(--rex)">Not saving</b><br>This session only.`
     : `<b>${DB.lots.length}</b> lots · <b>${DB.events.length}</b> events<br>Held on this device`)
@@ -1523,6 +1543,16 @@ function renderSbPanel(){
   wireSbButtons();
 }
 
+function doSignOut(){
+  const pend = (DB.outbox||[]).length;
+  if(pend && !confirm(`${n0(pend)} change${pend>1?'s':''} on this device have not been sent yet. `
+    + `They stay here and go up next time someone signs in. Sign out anyway?`)) return;
+  signOut();
+  renderAll();
+  showGate();
+  toast('Signed out');
+}
+
 function wireSbButtons(){
   const s = sb(), pend = (DB.outbox||[]).length;
   const on = (id, fn) => { const el = $(id); if(el) el.onclick = fn; };
@@ -1567,11 +1597,7 @@ function wireSbButtons(){
     await syncNow(false); migrateJobs(); renderAll();
     toast('Copied fresh from Supabase');
   });
-  on('#sb-signout', async () => {
-    const pend = (DB.outbox||[]).length;
-    if(pend && !confirm(`${n0(pend)} change${pend>1?'s':''} have not been sent yet. They stay on this device and go up next time you sign in. Sign out anyway?`)) return;
-    await signOut(); renderAll(); showGate();
-  });
+  on('#sb-signout', () => doSignOut());
   on('#sb-forget', () => {
     if(!confirm('Stop syncing and go back to this browser only? The records stay on this device and in Supabase.')) return;
     DB.sb = BLANK().sb; clearInterval(SYNC.timer); save(); renderAll();
