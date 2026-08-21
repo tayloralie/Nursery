@@ -177,6 +177,38 @@ td.r,th.r{text-align:right}
 .chip.job{background:#E8F0F5;border-color:#B4CBD9;color:var(--marker)}
 .chip.hold{background:#F1F0EA;border-color:var(--line);color:var(--grey)}
 .chip.out{background:#F6EEDF;border-color:#DEC79B;color:var(--bark)}
+.pick{display:flex;flex-wrap:wrap;gap:6px;margin:0 0 16px}
+.pick button{background:var(--white);border:1px solid var(--line);border-radius:2px;
+  padding:6px 10px;cursor:pointer;text-align:left;font-size:12px;line-height:1.3}
+.pick button:hover{border-color:var(--chrome);background:#F7F8F6}
+.pick b{display:block;font-family:var(--serif);font-style:italic;font-size:13px}
+.pick span{font-family:var(--mono);font-size:10px;color:var(--grey)}
+.held{background:#F1F5EF;border:1px solid #C3D6BF;border-left:4px solid var(--rex-dk);
+  border-radius:2px;padding:12px 14px;margin-bottom:18px}
+.held .hd{font-family:var(--cond);text-transform:uppercase;letter-spacing:.13em;
+  font-size:11px;font-weight:700;margin-bottom:8px}
+.held table{width:100%;border-collapse:collapse;font-size:12px}
+.held td{padding:3px 0;border:0}
+.held td:last-child{text-align:right;font-family:var(--mono);font-weight:600}
+.held .use{margin-top:9px;display:flex;flex-wrap:wrap;gap:5px}
+.held .use button{background:var(--white);border:1px solid var(--line);border-radius:2px;
+  padding:4px 8px;cursor:pointer;font-family:var(--mono);font-size:10.5px}
+.held .use button:hover{border-color:var(--chrome)}
+.exp td{background:#F7F8F6;padding:0}
+.exp .inner{padding:14px 16px 16px;border-top:2px solid var(--chrome)}
+.exp table{background:var(--white);border:1px solid var(--line)}
+.exp th{background:var(--white)}
+.tally-strip{display:flex;flex-wrap:wrap;gap:0;margin-bottom:12px;background:var(--white);
+  border:1px solid var(--line);border-radius:2px}
+.tally-strip div{padding:9px 16px;border-right:1px solid var(--hair)}
+.tally-strip div:last-child{border-right:0}
+.tally-strip .k{display:block;font-family:var(--cond);text-transform:uppercase;
+  letter-spacing:.13em;font-size:9.5px;color:var(--grey);font-weight:700}
+.tally-strip .v{font-family:var(--mono);font-size:16px;font-weight:600}
+.tally-strip .v small{font-size:10.5px;color:var(--grey);font-weight:400;margin-left:4px}
+.twist{display:inline-block;width:9px;font-family:var(--mono);color:var(--grey);
+  transition:transform .12s}
+tr.open .twist{transform:rotate(90deg);color:var(--rex-dk)}
 .chip.prod{background:#F6EEDF;border-color:#DEC79B;color:var(--bark)}
 .chip.done{background:#EDEEEA;border-color:var(--line);color:var(--grey);
   text-decoration:line-through}
@@ -335,9 +367,10 @@ td.r,th.r{text-align:right}
         <div>
           <div class="card">
             <h2>Vital</h2>
+            <div id="r-recent"></div>
             <label class="f"><span>Botanical name</span>
               <input type="text" id="r-bot" list="dl-bot" autocomplete="off" placeholder="Acer circinatum">
-              <div class="hint" id="r-bothint">Saved names autocomplete. New names are added to the plant list.</div>
+              <div class="hint">Start typing — anything already in the yard fills in below.</div>
             </label>
             <div class="grid g2">
               <label class="f"><span>Cultivar</span>
@@ -375,6 +408,7 @@ td.r,th.r{text-align:right}
           </div>
         </div>
         <div>
+          <div id="r-holdings"></div>
           <h2>Tag preview</h2>
           <div id="r-tag"></div>
           <p class="hint" style="margin-top:10px">Prints at 3.5 × 2 in, two per row. Barcode is Code&nbsp;39 — readable by any standard scanner or phone app.</p>
@@ -385,12 +419,20 @@ td.r,th.r{text-align:right}
 
     <section class="view" id="v-yard">
       <h1>Yard</h1>
-      <p class="sub">Every lot on hand. Tap a row to open its tag, history, and actions.</p>
+      <p class="sub">Everything on the ground. Group it by plant to see where one kind is spread,
+        or by block to see what is standing in each bed.</p>
       <div class="filters">
         <label class="f grow"><span>Search</span>
-          <input type="search" id="y-q" placeholder="Name, code, grower, job, bed…"></label>
-        <label class="f"><span>Job</span><select id="y-job"></select></label>
+          <input type="search" id="y-q" placeholder="Plant, code, grower, project, block…"></label>
+        <label class="f"><span>Group by</span><select id="y-group">
+          <option value="plant">Plant</option>
+          <option value="loc">Block</option>
+          <option value="job">Project</option>
+          <option value="lot">Nothing — list every lot</option>
+        </select></label>
+        <label class="f"><span>Project</span><select id="y-job"></select></label>
         <label class="f"><span>Block</span><select id="y-loc"></select></label>
+        <label class="f"><span>Size</span><select id="y-size"></select></label>
         <label class="f"><span>Show</span><select id="y-status">
           <option value="live">On hand</option>
           <option value="all">All lots</option>
@@ -450,24 +492,6 @@ td.r,th.r{text-align:right}
         <button class="btn ghost sm" id="a-csv" style="margin-bottom:0">Export CSV</button>
       </div>
       <div id="archBody"></div>
-    </section>
-
-    <section class="view" id="v-plants">
-      <h1>Plant list</h1>
-      <p class="sub">Saved names for fast entry. Botanical names set in italic, as they should be.</p>
-      <div class="card" style="margin-bottom:20px">
-        <div class="grid g4">
-          <label class="f"><span>Botanical name</span><input type="text" id="p-bot"></label>
-          <label class="f"><span>Cultivar</span><input type="text" id="p-cult"></label>
-          <label class="f"><span>Common name</span><input type="text" id="p-com"></label>
-          <label class="f"><span>Default size</span><input type="text" id="p-size" class="mono"></label>
-        </div>
-        <div class="err" id="p-err"></div>
-        <button class="btn" id="p-add">Add to list</button>
-      </div>
-      <div class="filters"><label class="f grow"><span>Search</span>
-        <input type="search" id="p-q" placeholder="Filter names…"></label></div>
-      <div id="plantBody"></div>
     </section>
 
     <section class="view" id="v-tags">
@@ -557,8 +581,8 @@ td.r,th.r{text-align:right}
    Anyone who can open this file can read and write the whole yard, so keep
    it on crew devices and off public links and repos.
    ===================================================================== */
-const SUPABASE_URL = 'https://tjrjcjkyrewsrfxsjaqb.supabase.co';        // e.g. 'https://abcdefghijkl.supabase.co'
-const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InRqcmpjamt5cmV3c3JmeHNqYXFiIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODcxNjM3NTgsImV4cCI6MjEwMjczOTc1OH0.62bmGbWZirKKtdSIOG4Jcv0DI_8HpliKtOT9v26jTZc';   // e.g. 'eyJhbGciOiJIUzI1NiIsInR5cCI6...'
+const SUPABASE_URL = 'https://tjrjcjkyrewsrfxsjaqb.supabase.co';
+const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InRqcmpjamt5cmV3c3JmeHNqYXFiIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODcxNjM3NTgsImV4cCI6MjEwMjczOTc1OH0.62bmGbWZirKKtdSIOG4Jcv0DI_8HpliKtOT9v26jTZc';
 /* =====================================================================
    ↑↑↑  nothing below here needs editing  ↑↑↑
    ===================================================================== */
@@ -1214,13 +1238,13 @@ function locRollup(){
    ===================================================================== */
 const VIEWS = [
   ['board','Board'], ['jobs','Jobs'], ['receive','Receive'], ['yard','Yard'], ['ship','Ship'],
-  ['history','History'], ['archive','Archive'], ['salvage','Salvage'], ['plants','Plants'],
+  ['history','History'], ['archive','Archive'], ['salvage','Salvage'],
   ['tags','Tags'], ['data','Data']
 ];
 let current = 'board';
 
 function renderNav(){
-  const counts = {yard: live().length, tags: DB.queue.length, plants: DB.plants.length,
+  const counts = {yard: live().length, tags: DB.queue.length,
     archive: DB.arch.length, jobs: openJobs().length};
   $('#nav').innerHTML = VIEWS.map(([k,label]) =>
     `<button data-v="${k}" aria-current="${k===current}">${label}` +
@@ -1272,7 +1296,7 @@ function go(v){
 function renderAll(){
   renderStrip(); renderFoot(); fillDatalists(); renderNav(); renderSyncUI();
   ({board:renderBoard, yard:renderYard, ship:renderShip, history:renderHistory,
-    salvage:renderSalvage, plants:renderPlants, tags:renderTags,
+    salvage:renderSalvage, tags:renderTags,
     archive:renderArchive, jobs:renderJobs}[current]||(()=>{}))();
 }
 function toast(msg, kind){
@@ -1558,18 +1582,29 @@ function renderBoard(){
 /* =====================================================================
    YARD
    ===================================================================== */
-function renderYard(){
+/* =====================================================================
+   YARD — the single place stock is looked up.
+   The same filtered set of lots, shown grouped by plant, block, project,
+   or not at all. Grouping is a lens, not a different screen.
+   ===================================================================== */
+const openRows = new Set();
+
+function yardFilters(){
   const opts = (sel, arr, allLabel) => {
     const keep = $(sel).value;
     $(sel).innerHTML = `<option value="">${allLabel}</option>` +
       arr.map(v => `<option${v===keep?' selected':''}>${esc(v)}</option>`).join('');
   };
-  opts('#y-job', [HOLD].concat(allJobs()), 'Every job');
+  opts('#y-job', [HOLD].concat(allJobs()), 'Every project');
   opts('#y-loc', allLocs(), 'Every block');
+  opts('#y-size', uniqSorted(DB.lots.map(l => l.size)), 'Every size');
+}
 
+function yardLots(){
   const q = $('#y-q').value.trim().toLowerCase();
-  const fj = $('#y-job').value, fl = $('#y-loc').value, st = $('#y-status').value;
-  let rows = DB.lots.filter(l => {
+  const fj = $('#y-job').value, fl = $('#y-loc').value;
+  const fs = $('#y-size').value, st = $('#y-status').value;
+  return DB.lots.filter(l => {
     if(st === 'live' && l.qty <= 0) return false;
     if(st === 'gone' && l.qty !== 0) return false;
     if(st === 'warn' && l.qty >= 0) return false;
@@ -1577,6 +1612,7 @@ function renderYard(){
     if(st === 'unalloc' && (l.qty <= 0 || (l.job && l.job !== HOLD))) return false;
     if(fj && (l.job || HOLD) !== fj) return false;
     if(fl && l.loc !== fl) return false;
+    if(fs && l.size !== fs) return false;
     if(q){
       const hay = [l.code,l.bot,l.cult,l.com,l.size,l.job,l.loc,l.grower,l.note]
         .join(' ').toLowerCase();
@@ -1584,208 +1620,209 @@ function renderYard(){
     }
     return true;
   });
+}
+
+function renderYard(){
+  yardFilters();
+  const rows = yardLots(), group = $('#y-group').value;
   const qty = rows.reduce((s,l) => s + l.qty, 0);
+  const unalloc = rows.filter(l => (l.job||HOLD) === HOLD).reduce((s,l) => s + l.qty, 0);
+  const prod = rows.filter(l => l.prod).reduce((s,l) => s + l.qty, 0);
+
   if(!rows.length){
-    $('#yardBody').innerHTML = emptyState('No lots match',
+    $('#yardBody').innerHTML = emptyState('Nothing matches',
       'Loosen the filters, or clear the search box.');
     return;
   }
-  const CAP = 300, shown = rows.slice(0, CAP), $$m = priced();
-  $('#yardBody').innerHTML = `
-    <div class="tw"><table><thead><tr>
-      <th>Lot</th><th>Plant</th><th>Size</th><th class="r">On hand</th>
-      <th>Job</th><th>Block</th><th>Status</th><th>Received</th>
-      ${$$m?'<th class="r">Value</th>':''}<th></th>
-    </tr></thead><tbody>${shown.map(l => `<tr data-id="${l.id}" class="${l.qty<0?'warn':''}">
-      <td class="num" style="white-space:nowrap">${esc(l.code)}</td>
-      <td>${nameHTML(l)}${l.com?`<br><span class="com" style="font-size:11px;color:var(--grey)">${esc(l.com)}</span>`:''}</td>
-      <td class="num">${esc(l.size)}</td>
-      <td class="r num"><b${l.qty<0?' style="color:var(--rust)"':''}>${n0(l.qty)}</b>${
-        l.qty!==l.qtyIn?`<br><span style="font-size:10px;color:var(--grey)">of ${n0(l.qtyIn)}</span>`:''}</td>
-      <td><span class="chip ${(!l.job||l.job===HOLD)?'hold':'job'}">${esc(l.job||HOLD)}</span></td>
-      <td class="num">${esc(l.loc||'—')}</td>
-      <td>${l.prod?`<span class="chip prod">In production</span>`
-        :l.qty<0?`<span class="chip dead">Check</span>`:''}</td>
-      <td class="num" style="font-size:11.5px">${dshow(l.received)}</td>
-      ${$$m?`<td class="r num">${money(l.qty*(l.price||0))}</td>`:''}
-      <td><button class="btn ghost sm" data-q="${l.id}">Tag</button></td>
-    </tr>`).join('')}</tbody>
-    <tfoot><tr style="background:var(--paper)">
-      <td colspan="3" class="lab" style="padding:9px 12px">${n0(rows.length)} lots${
-        rows.length>CAP?` — newest ${CAP} shown`:''}</td>
-      <td class="r num"><b>${n0(qty)}</b></td><td colspan="4"></td>
-      ${$$m?`<td class="r num"><b>${money(rows.reduce((s,l)=>s+l.qty*(l.price||0),0))}</b></td>`:''}<td></td>
-    </tr></tfoot></table></div>`;
+  const strip = `<div class="tally-strip">
+    <div><span class="k">Plants</span><span class="v">${n0(qty)}</span></div>
+    <div><span class="k">Lots</span><span class="v">${n0(rows.length)}</span></div>
+    <div><span class="k">On projects</span><span class="v">${n0(qty - unalloc)}</span></div>
+    <div><span class="k">${esc(HOLD)}</span><span class="v">${n0(unalloc)}</span></div>
+    <div><span class="k">Kinds of plant</span><span class="v">${
+      n0(new Set(rows.map(l => plantKey(l.bot,l.cult))).size)}</span></div>
+    ${prod?`<div><span class="k">In production</span><span class="v" style="color:var(--bark)">${n0(prod)}</span></div>`:''}
+  </div>`;
+
+  $('#yardBody').innerHTML = strip + ({
+    lot: yardByLot, plant: yardByPlant, loc: yardByGroup, job: yardByGroup
+  }[group])(rows, group);
+
   $$('#yardBody tr[data-id]').forEach(tr => tr.onclick = e => {
-    if(e.target.dataset.q) return;
+    if(e.target.closest('button')) return;
     openLot(tr.dataset.id);
+  });
+  $$('#yardBody tr[data-open]').forEach(tr => tr.onclick = e => {
+    if(e.target.closest('button') || e.target.closest('a')) return;
+    const k = tr.dataset.open;
+    openRows.has(k) ? openRows.delete(k) : openRows.add(k);
+    renderYard();
   });
   $$('#yardBody button[data-q]').forEach(b => b.onclick = e => {
     e.stopPropagation(); queueTag(b.dataset.q);
   });
-}
-
-/* =====================================================================
-   JOBS SCREEN
-   ===================================================================== */
-let jobForm = null;   // {mode:'new'|'close'|'rename', name}
-
-function renderJobs(){
-  const open = openJobs(), closed = closedJobs();
-  const row = (name, isClosed) => {
-    const s = jobStats(name), r = jobRec(name) || {};
-    return `<tr data-job="${esc(name)}">
-      <td><span class="chip ${isClosed?'done':'job'}">${esc(name)}</span>
-        ${r.client?`<div style="font-size:11.5px;color:var(--grey);margin-top:3px">${esc(r.client)}</div>`:''}</td>
-      <td class="r num">${n0(s.live)}</td>
-      <td class="r num"><b>${n0(s.qty)}</b>${s.flagged?`<br><span style="font-size:10px;color:var(--rust)">${s.flagged} to check</span>`:''}</td>
-      <td class="num" style="font-size:11.5px">${s.blocks.slice(0,5).join(' ')||'—'}${
-        s.blocks.length>5?` +${s.blocks.length-5}`:''}</td>
-      <td class="num" style="font-size:11.5px">${dshow(isClosed?r.closed:(r.opened||s.first))}</td>
-      <td class="r" style="white-space:nowrap">
-        ${isClosed
-          ? `<button class="btn ghost sm" data-a="reopen" data-n="${esc(name)}">Reopen</button>`
-          : `<button class="btn ghost sm" data-a="close" data-n="${esc(name)}">Close</button>`}
-        <button class="btn ghost sm" data-a="rename" data-n="${esc(name)}">Rename</button>
-      </td></tr>`;
-  };
-  const table = (list, isClosed, emptyMsg) => list.length
-    ? `<div class="tw"><table><thead><tr>
-        <th>Job</th><th class="r">Lots</th><th class="r">On hand</th>
-        <th>Blocks</th><th>${isClosed?'Closed':'Opened'}</th><th></th>
-      </tr></thead><tbody>${list.map(n => row(n, isClosed)).join('')}</tbody></table></div>`
-    : emptyState(emptyMsg[0], emptyMsg[1]);
-
-  const junk = allJobs().filter(n => /^[-?—]+$/.test(n.trim()));
-  $('#jobsBody').innerHTML = `
-    ${junk.length?`<div class="note-strip"><b>Placeholder job names</b><br>
-      ${junk.map(n=>`<span class="chip">${esc(n)}</span>`).join(' ')} came in from the spreadsheet
-      standing in for “not allocated yet”. Rename one to <b>${HOLD}</b> to fold its stock into
-      unallocated, or give it a real job name.</div>`:''}
-    <div class="row" style="margin-bottom:16px">
-      <button class="btn go" id="j-new">Open a job</button>
-      ${closed.length?`<button class="btn ghost" id="j-toggle">${
-        showClosed?'Hide':'Show'} ${n0(closed.length)} closed</button>`:''}
-    </div>
-    <div id="jobForm"></div>
-    <h2>Open jobs</h2>
-    ${table(open, false, ['No jobs are open', 'Open one before the delivery lands so the stock has somewhere to go.'])}
-    ${showClosed && closed.length ? `<h2 style="margin-top:28px">Closed jobs</h2>
-      ${table(closed, true, ['', ''])}` : ''}`;
-
-  $('#j-new').onclick = () => { jobForm = {mode:'new'}; drawJobForm(); };
-  if($('#j-toggle')) $('#j-toggle').onclick = () => { showClosed = !showClosed; renderJobs(); };
-  $$('#jobsBody [data-a]').forEach(b => b.onclick = e => {
+  $$('#yardBody [data-lot]').forEach(x => x.onclick = e => {
+    e.preventDefault(); e.stopPropagation();
+    const l = lotByCode(x.dataset.lot); if(l) openLot(l.id);
+  });
+  $$('#yardBody [data-recv]').forEach(b => b.onclick = e => {
     e.stopPropagation();
-    const n = b.dataset.n;
-    if(b.dataset.a === 'reopen'){ reopenJob(n); toast(`${n} reopened`); renderAll(); return; }
-    jobForm = {mode: b.dataset.a, name: n}; drawJobForm();
+    const l = lotById(b.dataset.recv); if(l) receiveLike(l);
   });
-  $$('#jobsBody tr[data-job]').forEach(tr => tr.onclick = e => {
-    if(e.target.dataset.a) return;
-    go('yard'); $('#y-job').value = tr.dataset.job; $('#y-status').value = 'all'; renderYard();
-  });
-  if(jobForm) drawJobForm();
-}
-let showClosed = false;
-
-function drawJobForm(){
-  const f = jobForm; if(!f) return;
-  const box = $('#jobForm'); if(!box) return;
-  const s = f.name ? jobStats(f.name) : null;
-  const others = openJobs().filter(n => n !== f.name);
-  const body = {
-    new: `<h2>Open a job</h2>
-      <div class="grid g3">
-        <label class="f"><span>Job name</span><input type="text" id="j-name" placeholder="Pine Springs"></label>
-        <label class="f"><span>Client</span><input type="text" id="j-client" placeholder="Optional"></label>
-        <label class="f"><span>Start date</span><input type="date" id="j-date" class="mono" value="${today()}"></label>
-      </div>
-      <label class="f"><span>Notes</span><input type="text" id="j-note" placeholder="Spec revision, contact, anything worth keeping"></label>`,
-    close: `<h2>Close ${esc(f.name)}</h2>
-      ${s.qty > 0
-        ? `<p style="margin:0 0 14px;font-size:13.5px"><b>${n0(s.qty)} plants across ${n0(s.live)} lots
-             are still standing in ${s.blocks.join(', ')||'the yard'}.</b> Decide where they go — closing
-             a job never makes stock disappear.</p>
-           <label class="f"><span>The remaining stock</span><select id="j-mode">
-             <option value="hold">Goes back to ${HOLD} as unallocated</option>
-             <option value="move">Moves to another job</option>
-             <option value="keep">Stays allocated to ${esc(f.name)}</option>
-           </select></label>
-           <label class="f" id="j-targetwrap" style="display:none"><span>Move it to</span>
-             <select id="j-target">${others.map(n => `<option>${esc(n)}</option>`).join('')}</select></label>`
-        : `<p style="margin:0 0 14px;font-size:13.5px">Nothing is on hand for this job, so it closes clean.
-             Its ${n0(s.lots)} lots keep their full history.</p>
-           <input type="hidden" id="j-mode" value="keep">`}
-      <div class="grid g2">
-        <label class="f"><span>Closing date</span><input type="date" id="j-date" class="mono" value="${today()}"></label>
-        <label class="f"><span>Note</span><input type="text" id="j-note" placeholder="Why it's closing"></label>
-      </div>`,
-    rename: `<h2>Rename ${esc(f.name)}</h2>
-      <p style="margin:0 0 14px;font-size:13.5px">Renaming onto a name that already exists merges the two.
-        ${n0(s.lots)} lots and their history follow the new name.</p>
-      <div class="grid g2">
-        <label class="f"><span>New name</span><input type="text" id="j-name" list="dl-jobany" value="${esc(f.name)}"></label>
-        <label class="f"><span>Date</span><input type="date" id="j-date" class="mono" value="${today()}"></label>
-      </div>`
-  }[f.mode];
-  const label = {new:'Open job', close:'Close job', rename:'Rename'}[f.mode];
-  box.innerHTML = `<div class="card" style="margin-bottom:18px;border-color:var(--chrome)">
-    ${body}<div class="err" id="j-err"></div>
-    <div class="row" style="margin-top:6px">
-      <button class="btn ${f.mode==='close'?'':'go'}" id="j-go">${label}</button>
-      <button class="btn ghost" id="j-cancel">Cancel</button></div>
-    <datalist id="dl-jobany">${allJobs().concat([HOLD]).map(n => `<option value="${esc(n)}">`).join('')}</datalist>
-  </div>`;
-  const mode = $('#j-mode');
-  if(mode && mode.tagName === 'SELECT') mode.onchange = () =>
-    $('#j-targetwrap').style.display = mode.value === 'move' ? '' : 'none';
-  $('#j-cancel').onclick = () => { jobForm = null; renderJobs(); };
-  $('#j-go').onclick = () => commitJob();
 }
 
-function commitJob(){
-  const f = jobForm;
-  const v = id => { const el = $(id); return el ? el.value.trim() : ''; };
-  const fail = m => { const e = $('#j-err'); e.textContent = m; e.classList.add('on'); };
-  const date = v('#j-date') || today();
+/* ---------- flat: every lot ---------- */
+function yardByLot(rows){
+  const CAP = 300, m = priced();
+  return `<div class="tw"><table><thead><tr>
+    <th>Lot</th><th>Plant</th><th>Size</th><th class="r">On hand</th>
+    <th>Project</th><th>Block</th><th>Status</th><th>Received</th>
+    ${m?'<th class="r">Value</th>':''}<th></th>
+  </tr></thead><tbody>${rows.slice(0,CAP).map(l => `<tr data-id="${l.id}" class="${l.qty<0?'warn':''}">
+    <td class="num" style="white-space:nowrap">${esc(l.code)}</td>
+    <td>${nameHTML(l)}${l.com?`<br><span class="com" style="font-size:11px;color:var(--grey)">${esc(l.com)}</span>`:''}</td>
+    <td class="num">${esc(l.size)}</td>
+    <td class="r num"><b${l.qty<0?' style="color:var(--rust)"':''}>${n0(l.qty)}</b>${
+      l.qty!==l.qtyIn?`<br><span style="font-size:10px;color:var(--grey)">of ${n0(l.qtyIn)}</span>`:''}</td>
+    <td><span class="chip ${(!l.job||l.job===HOLD)?'hold':'job'}">${esc(l.job||HOLD)}</span></td>
+    <td class="num">${esc(l.loc||'—')}</td>
+    <td>${l.prod?`<span class="chip prod">In production</span>`:l.qty<0?`<span class="chip dead">Check</span>`:''}</td>
+    <td class="num" style="font-size:11.5px">${dshow(l.received)}</td>
+    ${m?`<td class="r num">${money(l.qty*(l.price||0))}</td>`:''}
+    <td class="r" style="white-space:nowrap"><button class="btn ghost sm" data-q="${l.id}">Tag</button></td>
+  </tr>`).join('')}</tbody></table></div>
+  ${rows.length>CAP?`<p class="hint" style="margin-top:8px">Showing the newest ${CAP} of ${n0(rows.length)}. Narrow the filters or export for the rest.</p>`:''}`;
+}
 
-  if(f.mode === 'new'){
-    const name = v('#j-name');
-    if(!name) return fail('Give the job a name.');
-    if(name === HOLD) return fail(`${HOLD} is where unallocated stock lives — pick another name.`);
-    if(jobRec(name)) return fail(`${name} already exists.`);
-    const near = allJobs().filter(n => {
-      const a = n.toLowerCase(), b = name.toLowerCase();
-      return a !== b && (a.includes(b) || b.includes(a));
-    });
-    if(near.length && !$('#j-err').dataset.warned){
-      $('#j-err').dataset.warned = '1';
-      return fail(`Close to ${near.slice(0,3).join(', ')}. Press again if this is a different job.`);
+/* ---------- by plant: one row per name, opening into the split ---------- */
+function yardByPlant(rows){
+  const m = new Map();
+  rows.forEach(l => {
+    const k = plantKey(l.bot, l.cult);
+    let r = m.get(k);
+    if(!r){ r = {bot:l.bot, cult:l.cult, com:l.com, lots:[], qty:0, unalloc:0, prod:0,
+                 jobs:new Set(), locs:new Set(), sizes:new Set(), cleared:0}; m.set(k, r); }
+    r.lots.push(l);
+    if(l.qty > 0){
+      r.qty += l.qty;
+      const job = l.job || HOLD;
+      if(job === HOLD) r.unalloc += l.qty; else r.jobs.add(job);
+      if(l.prod) r.prod += l.qty;
+      if(l.loc) r.locs.add(l.loc);
+      if(l.size) r.sizes.add(l.size);
+      if(!r.com && l.com) r.com = l.com;
+    } else r.cleared++;
+  });
+  const list = Array.from(m.entries()).sort((a,b) =>
+    b[1].qty - a[1].qty || a[1].bot.localeCompare(b[1].bot));
+  return `<div class="tw"><table><thead><tr>
+    <th>Plant</th><th>Common name</th><th>Sizes</th><th class="r">On hand</th>
+    <th class="r">On projects</th><th class="r">${esc(HOLD)}</th><th>Projects</th><th>Blocks</th>
+  </tr></thead><tbody>${list.map(([k,r]) => {
+    const open = openRows.has('p:'+k);
+    const jobs = Array.from(r.jobs).sort(), locs = Array.from(r.locs).sort();
+    return `<tr data-open="p:${esc(k)}" class="${open?'open':''}">
+      <td><span class="twist">\u203A</span> <span class="bot" style="font-size:15px">${esc(r.bot)}</span>${
+        r.cult?` <span class="cult">\u2018${esc(r.cult)}\u2019</span>`:''}</td>
+      <td><span class="com" style="font-size:11.5px;color:var(--grey)">${esc(r.com||'—')}</span></td>
+      <td class="num" style="font-size:11.5px">${Array.from(r.sizes).sort().join(', ')||'—'}</td>
+      <td class="r num"><b>${n0(r.qty)}</b>${r.prod?`<br><span class="chip prod">${n0(r.prod)} in prod</span>`:''}</td>
+      <td class="r num">${r.qty-r.unalloc?n0(r.qty-r.unalloc):'—'}</td>
+      <td class="r num">${r.unalloc?`<b>${n0(r.unalloc)}</b>`:'—'}</td>
+      <td>${jobs.slice(0,2).map(x=>`<span class="chip job">${esc(x)}</span>`).join(' ')}${
+        jobs.length>2?` <span class="chip">+${jobs.length-2}</span>`:(jobs.length?'':'—')}</td>
+      <td class="num" style="font-size:11.5px">${locs.slice(0,4).join(' ')||'—'}${
+        locs.length>4?` +${locs.length-4}`:''}</td>
+    </tr>
+    ${open?`<tr class="exp"><td colspan="8"><div class="inner">${splitTable(r)}</div></td></tr>`:''}`;
+  }).join('')}</tbody></table></div>`;
+}
+
+/* ---------- by block or project ---------- */
+function yardByGroup(rows, mode){
+  const m = new Map();
+  rows.forEach(l => {
+    const k = (mode === 'loc' ? (l.loc || '—') : (l.job || HOLD));
+    let r = m.get(k);
+    if(!r){ r = {key:k, lots:[], qty:0, plants:new Set(), other:new Set(), prod:0}; m.set(k, r); }
+    r.lots.push(l);
+    if(l.qty > 0){
+      r.qty += l.qty;
+      r.plants.add(plantKey(l.bot, l.cult));
+      r.other.add(mode === 'loc' ? (l.job || HOLD) : (l.loc || '—'));
+      if(l.prod) r.prod += l.qty;
     }
-    openJob(name, v('#j-client'), date, v('#j-note'));
-    toast(`${name} opened`);
-  }
+  });
+  const list = Array.from(m.values()).sort((a,b) =>
+    (a.key === HOLD) - (b.key === HOLD) || b.qty - a.qty);
+  const otherLabel = mode === 'loc' ? 'Projects' : 'Blocks';
+  return `<div class="tw"><table><thead><tr>
+    <th>${mode === 'loc' ? 'Block' : 'Project'}</th><th class="r">Plants</th>
+    <th class="r">Lots</th><th class="r">Kinds</th><th>${otherLabel}</th>
+  </tr></thead><tbody>${list.map(r => {
+    const open = openRows.has('g:'+r.key);
+    const others = Array.from(r.other).sort();
+    return `<tr data-open="g:${esc(r.key)}" class="${open?'open':''}">
+      <td><span class="twist">\u203A</span> <span class="chip ${
+        mode==='loc'?'':(r.key===HOLD?'hold':'job')}" style="font-size:12px">${esc(r.key)}</span></td>
+      <td class="r num"><b>${n0(r.qty)}</b>${r.prod?`<br><span class="chip prod">${n0(r.prod)} in prod</span>`:''}</td>
+      <td class="r num">${n0(r.lots.filter(l=>l.qty>0).length)}</td>
+      <td class="r num">${n0(r.plants.size)}</td>
+      <td class="num" style="font-size:11.5px">${others.slice(0,5).join(' · ')||'—'}${
+        others.length>5?` +${others.length-5}`:''}</td>
+    </tr>
+    ${open?`<tr class="exp"><td colspan="5"><div class="inner">${groupTable(r, mode)}</div></td></tr>`:''}`;
+  }).join('')}</tbody></table></div>`;
+}
 
-  if(f.mode === 'close'){
-    const mode = v('#j-mode') || 'keep';
-    const target = v('#j-target');
-    if(mode === 'move' && !target) return fail('Pick the job the stock is moving to.');
-    closeJob(f.name, mode, target, date, v('#j-note'));
-    toast(`${f.name} closed`);
-  }
+/* ---------- expansions ---------- */
+function splitTable(r){
+  const live = r.lots.filter(l => l.qty > 0);
+  if(!live.length) return `<p style="margin:0;font-size:13px;color:var(--grey)">None on hand — ${n0(r.cleared)} cleared lot${r.cleared===1?'':'s'}.</p>`;
+  const m = new Map();
+  live.forEach(l => {
+    const job = l.job || HOLD, size = l.size || '—', loc = l.loc || '—';
+    const k = job+'\u0001'+size+'\u0001'+loc;
+    let x = m.get(k);
+    if(!x){ x = {job, size, loc, qty:0, lots:[], prod:0}; m.set(k, x); }
+    x.qty += l.qty; x.lots.push(l); if(l.prod) x.prod += l.qty;
+  });
+  const split = Array.from(m.values()).sort((a,b) =>
+    (a.job===HOLD)-(b.job===HOLD) || a.job.localeCompare(b.job) || b.qty-a.qty);
+  const line = x => `<tr>
+    <td><span class="chip ${x.job===HOLD?'hold':'job'}">${esc(x.job)}</span></td>
+    <td class="num">${esc(x.size)}</td><td class="num">${esc(x.loc)}</td>
+    <td class="r num">${n0(x.lots.length)}</td>
+    <td class="r num"><b>${n0(x.qty)}</b>${x.prod?` <span class="chip prod">${n0(x.prod)} in prod</span>`:''}</td>
+    <td class="num" style="font-size:11px">${x.lots.slice(0,4).map(l =>
+      `<a href="#" data-lot="${esc(l.code)}">${esc(l.code)}</a>`).join(' ')}${
+      x.lots.length>4?` +${x.lots.length-4}`:''}</td></tr>`;
+  const onJob = split.filter(x => x.job !== HOLD), held = split.filter(x => x.job === HOLD);
+  return `<div class="row" style="margin-bottom:10px">
+      <button class="btn ghost sm" data-recv="${live[0].id}">Receive more of this</button></div>
+    <table><thead><tr><th>Project</th><th>Size</th><th>Block</th>
+      <th class="r">Lots</th><th class="r">On hand</th><th>Lot codes</th></tr></thead>
+    <tbody>${onJob.map(line).join('')}
+      ${held.length?`<tr><td colspan="6" class="lab" style="background:var(--paper);padding:6px 12px">Not on a project</td></tr>`:''}
+      ${held.map(line).join('')}</tbody></table>`;
+}
 
-  if(f.mode === 'rename'){
-    const to = v('#j-name');
-    if(!to) return fail('Give it a name.');
-    if(to === f.name) return fail('That is the same name.');
-    const merging = to !== HOLD && jobRec(to);
-    if(merging && !confirm(`${to} already exists. Merge ${f.name} into it? This cannot be undone.`)) return;
-    const n = renameJob(f.name, to, date);
-    toast(`${n0(n)} lots moved to ${to}`);
-  }
-
-  jobForm = null; renderAll();
+function groupTable(r, mode){
+  const live = r.lots.filter(l => l.qty > 0)
+    .sort((a,b) => b.qty - a.qty || a.bot.localeCompare(b.bot));
+  if(!live.length) return `<p style="margin:0;font-size:13px;color:var(--grey)">Nothing on hand here.</p>`;
+  return `<table><thead><tr>
+    <th>Plant</th><th>Size</th><th>${mode==='loc'?'Project':'Block'}</th>
+    <th class="r">On hand</th><th>Lot</th></tr></thead>
+    <tbody>${live.slice(0,120).map(l => `<tr>
+      <td>${nameHTML(l)}</td><td class="num">${esc(l.size||'—')}</td>
+      <td>${mode==='loc'
+        ? `<span class="chip ${(l.job||HOLD)===HOLD?'hold':'job'}">${esc(l.job||HOLD)}</span>`
+        : `<span class="num">${esc(l.loc||'—')}</span>`}</td>
+      <td class="r num"><b>${n0(l.qty)}</b>${l.prod?` <span class="chip prod">in prod</span>`:''}</td>
+      <td class="num" style="font-size:11px"><a href="#" data-lot="${esc(l.code)}">${esc(l.code)}</a></td>
+    </tr>`).join('')}</tbody></table>
+    ${live.length>120?`<p class="hint" style="margin-top:6px">Showing 120 of ${n0(live.length)} lots.</p>`:''}`;
 }
 
 /* =====================================================================
@@ -2199,46 +2236,39 @@ function renderSalvage(){
 }
 
 /* =====================================================================
-   PLANTS
+   PLANT LOOKUP HELPERS  (shared by the yard and the receive screen)
    ===================================================================== */
-function renderPlants(){
-  const q = $('#p-q').value.trim().toLowerCase();
-  const rows = DB.plants.filter(p =>
-    !q || (p.bot + ' ' + (p.cult||'') + ' ' + p.com).toLowerCase().includes(q));
-  if(!rows.length){
-    $('#plantBody').innerHTML = emptyState(
-      DB.plants.length ? 'No names match' : 'The plant list is empty',
-      DB.plants.length ? 'Try a different spelling.' : 'Names are saved automatically as you receive stock.');
-    return;
-  }
-  $('#plantBody').innerHTML = `<div class="tw"><table><thead><tr>
-    <th>Botanical name</th><th>Cultivar</th><th>Common name</th><th>Default size</th>
-    <th class="r">Lots</th><th class="r">On hand</th><th></th>
-  </tr></thead><tbody>${rows.map(p => {
-    const ls = DB.lots.filter(l => l.bot.toLowerCase() === p.bot.toLowerCase()
-      && (l.cult||'').toLowerCase() === (p.cult||'').toLowerCase());
-    return `<tr style="cursor:default">
-      <td><span class="bot" style="font-size:15px">${esc(p.bot)}</span></td>
-      <td><span class="cult">${p.cult?'\u2018'+esc(p.cult)+'\u2019':'—'}</span></td>
-      <td><span class="com">${esc(p.com||'—')}</span></td>
-      <td class="num">${esc(p.size||'—')}</td>
-      <td class="r num">${n0(ls.length)}</td>
-      <td class="r num">${n0(ls.reduce((s,l)=>s+l.qty,0))}</td>
-      <td class="r"><button class="btn ghost sm" data-use="${p.id}">Receive</button>
-        <button class="btn ghost sm" data-del="${p.id}">Remove</button></td></tr>`;
-  }).join('')}</tbody></table></div>`;
-  $$('#plantBody [data-use]').forEach(b => b.onclick = () => {
-    const p = DB.plants.find(x => x.id === b.dataset.use);
-    go('receive'); $('#r-bot').value = p.bot; $('#r-cult').value = p.cult||'';
-    $('#r-com').value = p.com;
-    if(p.size) $('#r-size').value = p.size; previewTag(); $('#r-qty').focus();
+function plantKey(bot, cult){
+  return (String(bot||'').toLowerCase() + '|' + String(cult||'').toLowerCase());
+}
+function holdingsFor(bot, cult){
+  const k = plantKey(bot, cult);
+  const ls = DB.lots.filter(l => plantKey(l.bot, l.cult) === k && l.qty > 0);
+  const by = (f) => {
+    const m = new Map();
+    ls.forEach(l => m.set(f(l), (m.get(f(l)) || 0) + l.qty));
+    return Array.from(m.entries()).sort((a,b) => b[1] - a[1]);
+  };
+  return {
+    lots: ls,
+    qty: ls.reduce((s,l) => s + l.qty, 0),
+    sizes: by(l => l.size || '—'),
+    locs:  by(l => l.loc || '—'),
+    jobs:  by(l => l.job || HOLD),
+    last:  ls.slice().sort((a,b) =>
+             String(b.received||'').localeCompare(String(a.received||'')))[0]
+  };
+}
+/* The combinations most recently received, for one-tap refills. */
+function recentReceipts(n){
+  const seen = new Set(), out = [];
+  DB.events.filter(e => e.type === 'RECEIVE').forEach(e => {
+    const l = lotById(e.lotId); if(!l) return;
+    const k = plantKey(l.bot, l.cult) + '|' + l.size;
+    if(seen.has(k)) return;
+    seen.add(k); out.push(l);
   });
-  $$('#plantBody [data-del]').forEach(b => b.onclick = () => {
-    const p = DB.plants.find(x => x.id === b.dataset.del);
-    if(!confirm(`Remove ${p.bot} from the plant list? Lots already received keep their names.`)) return;
-    DB.plants = DB.plants.filter(x => x.id !== b.dataset.del);
-    save(); renderAll(); toast(`${p.bot} removed from the list`);
-  });
+  return out.slice(0, n || 6);
 }
 
 /* =====================================================================
@@ -2297,6 +2327,78 @@ function readReceive(){
     price: Number($('#r-price').value) || 0, note: $('#r-note').value.trim()
   };
 }
+/* Pre-fill from a lot already in the yard, so a repeat delivery is a tap. */
+function receiveLike(l){
+  go('receive');
+  $('#r-bot').value = l.bot; $('#r-cult').value = l.cult || '';
+  $('#r-com').value = l.com || ''; $('#r-size').value = l.size || '';
+  $('#r-job').value = (l.job && l.job !== HOLD) ? l.job : '';
+  $('#r-loc').value = l.loc || ''; $('#r-grow').value = l.grower || '';
+  $('#r-date').value = today();
+  previewTag(); renderReceiveAids();
+  setTimeout(() => $('#r-qty').select(), 60);
+}
+
+function renderReceiveAids(){
+  // quick picks: what has come in before
+  const box = $('#r-recent');
+  if(box){
+    const rec = recentReceipts(6);
+    box.innerHTML = rec.length ? `<div class="lab" style="margin-bottom:6px">Received before — tap to fill</div>
+      <div class="pick">${rec.map(l => `<button type="button" data-like="${l.id}">
+        <b>${esc(l.bot)}${l.cult?` \u2018${esc(l.cult)}\u2019`:''}</b>
+        <span>${esc(l.size||'—')}${l.loc?` · blk ${esc(l.loc)}`:''}${l.grower?` · ${esc(l.grower)}`:''}</span>
+      </button>`).join('')}</div>` : '';
+    $$('#r-recent [data-like]').forEach(b => b.onclick = () => {
+      const l = lotById(b.dataset.like); if(l) receiveLike(l);
+    });
+  }
+
+  // what the yard already holds of the plant being typed
+  const hold = $('#r-holdings'); if(!hold) return;
+  const bot = $('#r-bot').value.trim(), cult = $('#r-cult').value.trim();
+  if(!bot){ hold.innerHTML = ''; return; }
+  const h = holdingsFor(bot, cult);
+  if(!h.qty){
+    hold.innerHTML = `<div class="held" style="background:var(--paper);border-color:var(--line);
+      border-left-color:var(--grey)"><div class="hd">New to the yard</div>
+      <div style="font-size:12.5px">Nothing on hand under this name. It will be added to the plant list.</div></div>`;
+    return;
+  }
+  const row = (label, pairs) => `<tr><td style="color:var(--grey)">${label}</td>
+    <td>${pairs.slice(0,4).map(([k,v]) => `${esc(k)} ${n0(v)}`).join(' · ')}${
+      pairs.length>4?` +${pairs.length-4}`:''}</td></tr>`;
+  hold.innerHTML = `<div class="held">
+    <div class="hd">Already on hand — ${n0(h.qty)} in ${n0(h.lots.length)} lot${h.lots.length===1?'':'s'}</div>
+    <table>${row('Sizes', h.sizes)}${row('Blocks', h.locs)}${row('Projects', h.jobs)}</table>
+    <div class="use">
+      ${h.last ? `<button type="button" data-fill="last">Match the last one${
+        h.last.size?` (${esc(h.last.size)}${h.last.loc?`, blk ${esc(h.last.loc)}`:''})`:''}</button>` : ''}
+      ${h.locs.slice(0,3).map(([k]) => k !== '—'
+        ? `<button type="button" data-loc="${esc(k)}">Put in ${esc(k)}</button>` : '').join('')}
+      <button type="button" data-see="1">See all of it</button>
+    </div></div>`;
+  const last = h.last;
+  const b1 = hold.querySelector('[data-fill]');
+  if(b1) b1.onclick = () => {
+    if(!$('#r-size').value) $('#r-size').value = last.size || '';
+    if(!$('#r-loc').value)  $('#r-loc').value  = last.loc || '';
+    if(!$('#r-grow').value) $('#r-grow').value = last.grower || '';
+    if(!$('#r-com').value)  $('#r-com').value  = last.com || '';
+    previewTag(); renderReceiveAids();
+  };
+  $$('#r-holdings [data-loc]').forEach(b => b.onclick = () => {
+    $('#r-loc').value = b.dataset.loc; previewTag(); renderReceiveAids();
+  });
+  const b2 = hold.querySelector('[data-see]');
+  if(b2) b2.onclick = () => {
+    go('yard');
+    $('#y-group').value = 'plant'; $('#y-q').value = bot;
+    $('#y-status').value = 'live'; $('#y-job').value = ''; $('#y-loc').value = '';
+    $('#y-size').value = ''; renderYard();
+  };
+}
+
 function previewTag(feed){
   const f = readReceive();
   $('#r-tag').innerHTML = tagHTML({
@@ -2316,7 +2418,7 @@ function wire(){
   // receive
   $('#r-date').value = today();
   ['#r-bot','#r-cult','#r-com','#r-size','#r-qty','#r-job','#r-loc'].forEach(s =>
-    $(s).addEventListener('input', () => previewTag()));
+    $(s).addEventListener('input', () => { previewTag(); renderReceiveAids(); }));
   $('#r-bot').addEventListener('change', () => {
     const p = DB.plants.find(x => x.bot.toLowerCase() === $('#r-bot').value.trim().toLowerCase());
     if(p){ if(!$('#r-com').value) $('#r-com').value = p.com;
@@ -2346,11 +2448,11 @@ function wire(){
     clearReceive();
     $('#r-job').value = keep.job; $('#r-loc').value = keep.loc;
     $('#r-grow').value = keep.grower; $('#r-date').value = keep.date;
-    previewTag(true); renderAll();
+    previewTag(true); renderReceiveAids(); renderAll();
   };
 
   // yard
-  ['#y-q','#y-job','#y-loc','#y-status'].forEach(s =>
+  ['#y-q','#y-group','#y-job','#y-loc','#y-size','#y-status'].forEach(s =>
     $(s).addEventListener('input', renderYard));
   $('#y-csv').onclick = () => {
     const rows = [['Lot','Botanical','Cultivar','Common','Size','Received','On hand','Shipped',
@@ -2399,15 +2501,6 @@ function wire(){
   };
 
   // plants
-  $('#p-q').addEventListener('input', renderPlants);
-  $('#p-add').onclick = () => {
-    const bot = $('#p-bot').value.trim(), err = $('#p-err');
-    if(!bot){ err.textContent = 'A botanical name is required.'; return err.classList.add('on'); }
-    err.classList.remove('on');
-    rememberPlant(bot, $('#p-com').value.trim(), $('#p-size').value.trim(), $('#p-cult').value.trim());
-    $('#p-bot').value = $('#p-com').value = $('#p-size').value = $('#p-cult').value = '';
-    save(); renderAll(); toast(`${bot} added to the plant list`);
-  };
 
   // tags
   $('#t-print').onclick = () => {
@@ -2467,7 +2560,7 @@ function wire(){
     deviceId(); save();
   }
   migrateJobs();
-  wire(); wireGate(); previewTag(); go('board');
+  wire(); wireGate(); previewTag(); renderReceiveAids(); go('board');
   if(gateNeeded()) showGate();
   else if(sbOn()){ startSyncLoop(); syncNow(true); }
 })();
