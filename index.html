@@ -531,8 +531,10 @@ tr.open .twist{transform:rotate(90deg);color:var(--rex-dk)}
     <div class="mark">Rexius<span>Yard Control</span></div>
     <div class="card">
       <h2>Sign in</h2>
-      <label class="f"><span>Email</span>
-        <input type="email" id="g-email" autocomplete="username" autocapitalize="off" spellcheck="false"></label>
+      <label class="f"><span>Name</span>
+        <input type="text" id="g-email" autocomplete="username" autocapitalize="off"
+          spellcheck="false" placeholder="taylor">
+        <div class="hint" id="g-hint"></div></label>
       <label class="f"><span>Password</span>
         <input type="password" id="g-pass" autocomplete="current-password"></label>
       <div class="err" id="g-err"></div>
@@ -583,6 +585,17 @@ tr.open .twist{transform:rotate(90deg);color:var(--rex-dk)}
    ===================================================================== */
 const SUPABASE_URL = 'https://tjrjcjkyrewsrfxsjaqb.supabase.co';
 const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InRqcmpjamt5cmV3c3JmeHNqYXFiIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODcxNjM3NTgsImV4cCI6MjEwMjczOTc1OH0.62bmGbWZirKKtdSIOG4Jcv0DI_8HpliKtOT9v26jTZc';
+
+/* The crew signs in with a first name. Supabase still needs an email
+   underneath, so the name is turned into one by adding this on the end —
+   "taylor" becomes "taylor@rexius.com". Create the accounts in Supabase
+   with the full address; nobody has to type it.
+   Anyone whose account is a different address can still type it in full. */
+const SIGNIN_SUFFIX = '@rexius.com';
+
+/* Shown in the bottom corner and on the Data tab. If the version on screen is
+   not the one you just uploaded, the browser is serving an older copy. */
+const BUILD = '2026-08-21-g';
 /* =====================================================================
    ↑↑↑  nothing below here needs editing  ↑↑↑
    ===================================================================== */
@@ -595,7 +608,7 @@ const REASONS = ['Died','Damaged'];
 const BLANK = () => ({lots:[], events:[], plants:[], jobs:[], locs:[], growers:[],
   credits:[], arch:[], seq:0, queue:[], src:'',
   outbox:[], sb:{url:'', key:'', device:'', since:'1970-01-01T00:00:00Z',
-                 block:{next:0, end:0}, uploaded:false,
+                 block:{next:0, end:0},
                  auth:{access:'', refresh:'', exp:0, email:''}}});
 let DB = BLANK();
 let memoryOnly = false, saveTimer = null;
@@ -953,7 +966,7 @@ function rememberPlant(bot, com, size, cult){
        applies it only if that entry is new, so a retry after a dropped
        connection can never double-count.
    ===================================================================== */
-const SYNC = {busy:false, last:'', err:'', timer:null};
+const SYNC = {busy:false, last:'', err:'', timer:null, remote:null};
 
 /* ---------- sign-in ----------
    Accounts live in Supabase. The anon key below only gets you as far as the
@@ -967,17 +980,57 @@ function auth(){
 }
 const signedIn = () => !!auth().refresh;
 
+/* "Taylor Alie" -> taylor.alie@rexius.com. An address typed in full is left alone. */
+function toAccount(name){
+  const t = String(name || '').trim();
+  if(!t) return '';
+  if(t.includes('@')) return t.toLowerCase();
+  return t.toLowerCase().replace(/[^a-z0-9._-]+/g, '.').replace(/^\.+|\.+$/g, '')
+         + SIGNIN_SUFFIX;
+}
+/* And back the other way, for anywhere a person is named on screen. */
+const shortName = e => String(e || '').split('@')[0].replace(/[._]+/g, ' ');
+
+/* Anything that stops a request has to come back naming itself. A bare
+   "failed to fetch" sends people hunting through Supabase settings when the
+   real cause is usually the page being opened from disk, or being offline. */
+function netError(e, where){
+  const m = String((e && e.message) || e);
+  if(/abort/i.test(m)) return `${where} timed out. The connection may be very slow.`;
+  if(/failed to fetch|networkerror|load failed|typeerror/i.test(m)){
+    if(!navigator.onLine) return 'This device is offline.';
+    if(location.protocol === 'file:')
+      return 'The page was opened from a file on this computer, and browsers block '
+           + 'that from reaching Supabase. Open the published web address instead.';
+    return `${where} could not be reached. Check the connection, and that the project `
+         + `at ${sb().url.replace(/^https?:\/\//,'')} is not paused in Supabase.`;
+  }
+  return m;
+}
+
 async function authFetch(path, body, token){
   const s = sb();
-  const r = await fetch(`${s.url.replace(/\/+$/,'')}/auth/v1/${path}`, {
-    method:'POST',
-    headers:{'apikey': s.key, 'Content-Type':'application/json',
-             'Authorization': 'Bearer ' + (token || s.key)},
-    body: JSON.stringify(body || {})
-  });
+  let r;
+  try{
+    r = await fetch(`${s.url.replace(/\/+$/,'')}/auth/v1/${path}`, {
+      method:'POST',
+      headers:{'apikey': s.key, 'Content-Type':'application/json',
+               'Authorization': 'Bearer ' + (token || s.key)},
+      body: JSON.stringify(body || {})
+    });
+  }catch(e){ throw new Error(netError(e, 'The sign-in service')); }
   const txt = await r.text();
   let data = {}; try{ data = txt ? JSON.parse(txt) : {}; }catch(e){}
-  if(!r.ok) throw new Error(data.error_description || data.msg || data.message || `${r.status}`);
+  if(!r.ok){
+    const msg = data.error_description || data.msg || data.message || '';
+    if(r.status === 400 && /not confirmed/i.test(msg))
+      throw new Error('That account has not been confirmed. In Supabase, open the user '
+        + 'and confirm it, or add the user again with Auto Confirm ticked.');
+    if(r.status === 401 || r.status === 403)
+      throw new Error('The key in this file was refused by the project (' + r.status
+        + '). It may have been rotated in Supabase.');
+    throw new Error(msg || `The sign-in service returned ${r.status}.`);
+  }
   return data;
 }
 
@@ -990,7 +1043,8 @@ function keepSession(d){
   save();
 }
 
-async function signIn(email, password){
+async function signIn(name, password){
+  const email = toAccount(name);
   const d = await authFetch('token?grant_type=password', {email, password});
   keepSession(d);
   return auth().email;
@@ -1041,14 +1095,22 @@ async function rpc(name, args, ms){
   const ctl = new AbortController();
   const t = setTimeout(() => ctl.abort(), ms || 25000);
   try{
-    const r = await fetch(`${s.url.replace(/\/+$/,'')}/rest/v1/rpc/${name}`, {
-      method:'POST', signal: ctl.signal,
-      headers:{'apikey': s.key, 'Authorization': 'Bearer ' + token,
-               'Content-Type':'application/json'},
-      body: JSON.stringify(args || {})
-    });
+    let r;
+    try{
+      r = await fetch(`${s.url.replace(/\/+$/,'')}/rest/v1/rpc/${name}`, {
+        method:'POST', signal: ctl.signal,
+        headers:{'apikey': s.key, 'Authorization': 'Bearer ' + token,
+                 'Content-Type':'application/json'},
+        body: JSON.stringify(args || {})
+      });
+    }catch(e){ throw new Error(netError(e, 'The database')); }
     const body = await r.text();
-    if(!r.ok) throw new Error(`${r.status} ${body.slice(0,180)}`);
+    if(!r.ok){
+      if(r.status === 404)
+        throw new Error(`The database has no function called ${name}. `
+          + `Run supabase-schema.sql in the SQL editor.`);
+      throw new Error(`${name} returned ${r.status}: ${body.slice(0,160)}`);
+    }
     return body ? JSON.parse(body) : null;
   } finally { clearTimeout(t); }
 }
@@ -1120,7 +1182,6 @@ function opForWire(o){
 /* ---------- push what we owe, then take what is new ---------- */
 async function syncNow(quiet){
   if(SYNC.busy || !sbOn() || !signedIn()) return false;
-  if(!sb().uploaded){ return false; }     // nothing up there to sync against yet
   SYNC.busy = true; SYNC.err = ''; renderSyncUI();
   try{
     while(DB.outbox.length){
@@ -1168,6 +1229,17 @@ async function syncNow(quiet){
     await topUpCodes(false);
     SYNC.last = new Date().toISOString();
     save();
+    // An empty yard after a clean sync means the database itself is empty, or
+    // this device's watermark has run past everything. Say so rather than
+    // showing a blank screen and calling it success.
+    if(!DB.lots.length){
+      const stats = await rpc('rx_stats');
+      SYNC.remote = Number(stats.lots) || 0;
+      if(SYNC.remote > 0){
+        SYNC.err = `The database holds ${n0(SYNC.remote)} lots but this device has none. `
+                 + `Use "Pull everything again" on the Data tab.`;
+      }
+    } else SYNC.remote = null;
     if(!quiet && n) toast(`${n0(n)} update${n>1?'s':''} pulled in`);
     return true;
   }catch(e){
@@ -1185,6 +1257,14 @@ async function syncNow(quiet){
   }finally{
     SYNC.busy = false; renderSyncUI(); renderAll();
   }
+}
+
+async function pullEverything(){
+  const s = sb();
+  s.since = '1970-01-01T00:00:00Z';
+  DB.arch = [];
+  save();
+  return syncNow(false);
 }
 
 function startSyncLoop(){
@@ -1252,9 +1332,10 @@ function renderNav(){
   $$('#nav button').forEach(b => b.onclick = () => go(b.dataset.v));
 }
 function renderFoot(){
-  $('#railfoot').innerHTML = memoryOnly
+  $('#railfoot').innerHTML = (memoryOnly
     ? `<b style="color:var(--rex)">Not saving</b><br>This session only.`
-    : `<b>${DB.lots.length}</b> lots · <b>${DB.events.length}</b> events<br>Saved in this browser`;
+    : `<b>${DB.lots.length}</b> lots · <b>${DB.events.length}</b> events<br>Held on this device`)
+    + `<br><span style="opacity:.65">build ${BUILD}</span>`;
 }
 function renderStrip(){
   const jr = jobRollup(), hold = jr.find(r => r.job === HOLD);
@@ -1321,7 +1402,7 @@ function gateNeeded(){ return sbOn() && !signedIn(); }
 function showGate(){
   const g = $('#gate'); if(!g) return;
   g.classList.add('on');
-  $('#g-foot').innerHTML = `Accounts are created in Supabase — ask Taylor if you need one.` +
+  $('#g-foot').innerHTML = `Just your first name — no email needed. Ask Taylor if you need an account.` +
     ((DB.outbox||[]).length ? `<br><b style="color:var(--rex)">${n0(DB.outbox.length)} change${
       DB.outbox.length>1?'s':''} on this device are still waiting to be sent.</b> They are safe
       and will go up once you are back in.` : '');
@@ -1330,34 +1411,41 @@ function showGate(){
 function hideGate(){ const g = $('#gate'); if(g) g.classList.remove('on'); }
 
 function wireGate(){
+  const hint = () => {
+    const el = $('#g-hint'); if(!el) return;
+    const v = $('#g-email').value.trim();
+    el.textContent = v ? 'Signing in as ' + toAccount(v) : '';
+  };
+  $('#g-email').addEventListener('input', hint);
+
   const go = async () => {
-    const email = $('#g-email').value.trim();
+    const who = $('#g-email').value.trim();
     const pass = $('#g-pass').value;
     const err = $('#g-err');
     const fail = m => { err.textContent = m; err.classList.add('on'); $('#g-go').disabled = false;
                         $('#g-go').textContent = 'Sign in'; };
-    if(!email || !pass) return fail('Enter your email and password.');
+    if(!who || !pass) return fail('Enter your name and password.');
     if(!navigator.onLine)
       return fail('No connection. Signing in needs one — after that the app works offline.');
     err.classList.remove('on');
     $('#g-go').disabled = true; $('#g-go').textContent = 'Signing in…';
     try{
-      await signIn(email, pass);
+      await signIn(who, pass);
       $('#g-pass').value = '';
       hideGate();
       const stats = await rpc('rx_stats', {}, 15000);
       const remote = Number(stats.lots) || 0;
-      sb().uploaded = remote > 0;
-      if(remote > 0){ await syncNow(false); migrateJobs(); }
+      if(remote > 0){ await pullEverything(); migrateJobs(); }
       await topUpCodes(true); startSyncLoop(); save();
       $('#g-go').disabled = false; $('#g-go').textContent = 'Sign in';
       renderAll();
-      toast(`Signed in as ${auth().email}`);
+      toast(`Signed in as ${shortName(auth().email)}`);
     }catch(e){
       const m = String(e.message||e);
-      fail(/credential|grant|invalid/i.test(m)
-        ? 'That email and password did not match an account.'
-        : m.slice(0,140));
+      fail(/invalid login|invalid grant|credential/i.test(m)
+        ? `No account for ${toAccount(who)} with that password. Check the spelling of `
+          + `your name, and that the account exists in Supabase.`
+        : m.slice(0, 220));
     }
   };
   $('#g-go').onclick = go;
@@ -1374,7 +1462,6 @@ function renderSyncUI(){
   const s = sb(), pend = (DB.outbox||[]).length;
   let cls, txt;
   if(!sbOn())               { cls='off';  txt='Local only'; }
-  else if(!s.uploaded)      { cls='bad';  txt='Setup unfinished'; }
   else if(SYNC.busy)        { cls='busy'; txt='Syncing…'; }
   else if(!navigator.onLine){ cls='bad';  txt = pend ? `Offline · ${n0(pend)} waiting` : 'Offline'; }
   else if(SYNC.err)         { cls='bad';  txt='Sync problem'; }
@@ -1409,23 +1496,10 @@ function renderSbPanel(){
   const host = s.url.replace(/^https?:\/\//,'').replace(/\/.*$/,'');
   const baked = !!(SUPABASE_URL && SUPABASE_ANON_KEY);
 
-  if(!s.uploaded){
-    box.innerHTML = `
-      <div class="note-strip" style="background:#F9F2E6;border-color:#DEC79B;border-left-color:var(--bark)">
-        <b>Nothing in the database yet</b><br>Signed in to ${esc(host)}, but there is no stock up
-        there. Load the base inventory into Supabase first — the CSV files and the steps are in
-        the setup notes. Once it is in, press the button below.</div>
-      <div class="row">
-        <button class="btn go" id="sb-check">Check the database again</button>
-        <button class="btn ghost" id="sb-signout">Sign out</button>
-      </div>
-      <div id="sb-prog" class="hint" style="margin-top:12px"></div>`;
-    wireSbButtons(); return;
-  }
-
   box.innerHTML = `
     <div class="grid g2" style="gap:10px;margin-bottom:14px">
-      ${[['Project', host], ['Signed in as', auth().email || '—'], ['This device', deviceId()],
+      ${[['Project', host], ['Signed in as', shortName(auth().email) || '—'],
+         ['Build', BUILD], ['This device', deviceId()],
          ['Waiting to send', pend ? n0(pend) + ' changes' : 'nothing'],
          ['Last sync', SYNC.last ? new Date(SYNC.last).toLocaleTimeString() : 'not yet'],
          ['Lot numbers held', s.block.end >= s.block.next ? `${s.block.next}–${s.block.end}` : 'none'],
@@ -1438,6 +1512,8 @@ function renderSbPanel(){
       only here for when you want to force it.</p>
     <div class="row">
       <button class="btn go" id="sb-sync" ${SYNC.busy?'disabled':''}>Sync now</button>
+      <button class="btn ghost" id="sb-test">Test the connection</button>
+      <button class="btn" id="sb-pullall" ${SYNC.busy?'disabled':''}>Pull everything again</button>
       <button class="btn ghost" id="sb-replace" ${SYNC.busy?'disabled':''}>Replace from server</button>
       <button class="btn ghost" id="sb-signout">Sign out</button>
       ${baked?'':`<button class="btn ghost" id="sb-forget">Disconnect</button>`}
@@ -1452,13 +1528,33 @@ function wireSbButtons(){
   const on = (id, fn) => { const el = $(id); if(el) el.onclick = fn; };
 
   on('#sb-sync', () => syncNow(false));
+  on('#sb-test', async () => {
+    const p = $('#sb-prog');
+    p.textContent = 'Testing…';
+    const lines = [];
+    lines.push(`Build: ${BUILD}`);
+    lines.push(`Page served from: ${location.protocol === 'file:' ? 'a file on this computer — that will not work' : location.origin}`);
+    lines.push(`Browser reports: ${navigator.onLine ? 'online' : 'OFFLINE'}`);
+    lines.push(`Project: ${sb().url}`);
+    lines.push(`Signed in as: ${auth().email || 'nobody'}`);
+    try{
+      const st = await rpc('rx_stats', {}, 15000);
+      lines.push(`Database answered: ${n0(st.lots)} lots, ${n0(st.onhand)} plants on hand.`);
+      lines.push(`This device holds: ${n0(DB.lots.length)} lots.`);
+    }catch(e){ lines.push('FAILED: ' + String(e.message || e)); }
+    p.innerHTML = lines.map(esc).join('<br>');
+  });
+  on('#sb-pullall', async () => {
+    await pullEverything(); migrateJobs(); renderAll();
+    toast(DB.lots.length ? `${n0(DB.lots.length)} lots on this device now`
+                         : 'The database came back empty', DB.lots.length?'':'bad');
+  });
   on('#sb-check', async () => {
     try{
       const stats = await rpc('rx_stats');
       if(Number(stats.lots) > 0){
-        s.uploaded = true; save();
         toast(`${n0(stats.lots)} lots found — pulling them in`);
-        await syncNow(false); migrateJobs();
+        await pullEverything(); migrateJobs();
       } else toast('Still nothing in the database', 'bad');
       renderAll();
     }catch(e){ toast('Could not reach the project', 'bad'); }
@@ -1505,13 +1601,13 @@ async function connectSb(){
       if(pend && !confirm(`${n0(pend)} changes on this device have not been sent anywhere and will be lost. Continue?`)){
         s.url = ''; s.key = ''; return;
       }
-      const keep = Object.assign({}, s, {uploaded:true, since:'1970-01-01T00:00:00Z'});
+      const keep = Object.assign({}, s, {since:'1970-01-01T00:00:00Z'});
       DB = BLANK(); DB.sb = keep;
       await syncNow(false); migrateJobs();
       toast(`Connected — ${n0(remote)} lots pulled from the server`);
     } else {
-      s.uploaded = false; save();
-      toast('Connected — one setup step left');
+      save();
+      toast('Connected — nothing in the database yet');
     }
     await topUpCodes(true);
     startSyncLoop(); save(); renderAll();
@@ -1530,9 +1626,28 @@ async function connectSb(){
    ===================================================================== */
 function renderBoard(){
   if(!DB.lots.length){
+    // Never leave a blank board unexplained — say what went wrong and what to press.
+    if(sbOn() && signedIn()){
+      $('#boardBody').innerHTML = `
+        <div class="note-strip"><b>${SYNC.err ? 'The yard did not come down' : 'Nothing here yet'}</b><br>
+          ${SYNC.err ? esc(SYNC.err)
+            : SYNC.remote ? `Supabase holds ${n0(SYNC.remote)} lots, but none reached this device.`
+            : 'Signed in, but the database has no stock in it. Import the CSVs in Supabase, then pull again.'}
+        </div>
+        <div class="row">
+          <button class="btn go" id="b-pull">Pull everything again</button>
+          <button class="btn ghost" id="b-data">Open the Data tab</button>
+        </div>`;
+      $('#b-pull').onclick = async () => {
+        await pullEverything(); migrateJobs(); renderAll();
+        toast(DB.lots.length ? `${n0(DB.lots.length)} lots pulled in` : 'Still nothing came back', DB.lots.length?'':'bad');
+      };
+      $('#b-data').onclick = () => go('data');
+      return;
+    }
     $('#boardBody').innerHTML = emptyState('Nothing in the yard yet',
-      sbOn() && !signedIn() ? 'Sign in to pull the yard down from Supabase.'
-        : 'Log your first delivery on the Receive screen.');
+      sbOn() ? 'Sign in to pull the yard down from Supabase.'
+             : 'Log your first delivery on the Receive screen.');
     return;
   }
   const jr = jobRollup(), lr = locRollup(), max = Math.max(...jr.map(r => r.qty), 1);
@@ -1565,7 +1680,7 @@ function renderBoard(){
         <div class="card" style="padding:16px 18px">
           <ul class="tl">${recent.map(e => `<li class="k-${e.type}">
             <div class="tk">${e.type}</div>
-            <div class="td">${dshow(e.date)} · ${esc(e.lot)}${e.done_by?` · ${esc(String(e.done_by).split('@')[0])}`:''}</div>
+            <div class="td">${dshow(e.date)} · ${esc(e.lot)}${e.done_by?` · ${esc(shortName(e.done_by))}`:''}</div>
             <div class="tx">${nameHTML(e)} — ${esc(e.text)}</div>
           </li>`).join('')}</ul>
         </div>
@@ -1922,7 +2037,7 @@ function drawLot(form){
     <h2 style="margin-top:24px">Chain of custody</h2>
     <ul class="tl">${hist.map(e => `<li class="k-${e.type}">
       <div class="tk">${e.type}${e.reason?` · ${esc(e.reason)}`:''}</div>
-      <div class="td">${dshow(e.date)}${e.job?` · ${esc(e.job)}`:''}${e.done_by?` · ${esc(String(e.done_by).split('@')[0])}`:''}</div>
+      <div class="td">${dshow(e.date)}${e.job?` · ${esc(e.job)}`:''}${e.done_by?` · ${esc(shortName(e.done_by))}`:''}</div>
       <div class="tx">${esc(e.text)}</div>
       ${e.note?`<div class="tx" style="color:var(--grey);font-size:12px">${esc(e.note)}</div>`:''}
     </li>`).join('')}</ul>`;
@@ -2151,7 +2266,7 @@ function renderHistory(){
   const people = uniqSorted(DB.events.map(e => e.done_by));
   const keepBy = bySel.value;
   bySel.innerHTML = `<option value="">Anyone</option>` +
-    people.map(p => `<option${p===keepBy?' selected':''}>${esc(p)}</option>`).join('');
+    people.map(p => `<option value="${esc(p)}"${p===keepBy?' selected':''}>${esc(shortName(p))}</option>`).join('');
   const q = $('#h-q').value.trim().toLowerCase();
   const t = sel.value, from = $('#h-from').value, to = $('#h-to').value, fb = bySel.value;
   const rows = DB.events.filter(e => {
@@ -2177,7 +2292,7 @@ function renderHistory(){
     <td class="r num">${n0(e.qty)}</td>
     <td>${e.job?`<span class="chip ${e.job===HOLD?'hold':'job'}">${esc(e.job)}</span>`:''}</td>
     <td class="num" style="font-size:12px">${esc(e.loc||'')}</td>
-    <td style="font-size:11.5px">${esc(e.done_by?String(e.done_by).split('@')[0]:'')}</td>
+    <td style="font-size:11.5px">${esc(e.done_by?shortName(e.done_by):'')}</td>
     <td style="font-size:12.5px">${esc(e.text)}${e.note?`<br><span style="color:var(--grey);font-size:11.5px">${esc(e.note)}</span>`:''}</td>
   </tr>`).join('')}</tbody></table></div>
   <p class="hint" style="margin-top:8px">${rows.length} records${rows.length>400?' — showing the newest 400. Export for the full set.':''}</p>`
@@ -2227,7 +2342,7 @@ function renderSalvage(){
           <td>${nameHTML(e)}<br>
             <span class="num" style="font-size:11px;color:var(--grey)">${esc(e.lot)} · ${esc(e.size||'')}</span></td>
           <td class="r num">${n0(e.qty)}</td>
-          <td style="font-size:12.5px">${esc(e.reason||'—')}${e.done_by?` <span style="color:var(--grey)">· ${esc(String(e.done_by).split('@')[0])}</span>`:''}${e.note?`<br><span style="color:var(--grey);font-size:11px">${esc(e.note)}</span>`:''}</td>
+          <td style="font-size:12.5px">${esc(e.reason||'—')}${e.done_by?` <span style="color:var(--grey)">· ${esc(shortName(e.done_by))}</span>`:''}${e.note?`<br><span style="color:var(--grey);font-size:11px">${esc(e.note)}</span>`:''}</td>
           <td class="r num">${money(e.value||0)}</td></tr>`).join('')}
         </tbody></table></div>
       </div>
@@ -2538,7 +2653,7 @@ function wire(){
     };
     r.readAsText(f); e.target.value = '';
   };
-  $('#syncpill').onclick = () => { go('data'); if(sbOn() && sb().uploaded) syncNow(false); };
+  $('#syncpill').onclick = () => { go('data'); if(sbOn() && signedIn()) syncNow(false); };
   $('#syncpill').onkeydown = e => { if(e.key === 'Enter' || e.key === ' ') $('#syncpill').onclick(); };
   // drawer
   $('#dclose').onclick = closeDrawer;
@@ -2562,6 +2677,11 @@ function wire(){
   migrateJobs();
   wire(); wireGate(); previewTag(); renderReceiveAids(); go('board');
   if(gateNeeded()) showGate();
-  else if(sbOn()){ startSyncLoop(); syncNow(true); }
+  else if(sbOn()){
+    startSyncLoop();
+    // First pull of a session is loud: a silent failure here is how a device
+    // ends up looking empty for no visible reason.
+    syncNow(DB.lots.length > 0).then(() => renderAll());
+  }
 })();
 </script>
