@@ -595,7 +595,7 @@ const SIGNIN_SUFFIX = '@rexius.com';
 
 /* Shown in the bottom corner and on the Data tab. If the version on screen is
    not the one you just uploaded, the browser is serving an older copy. */
-const BUILD = '2026-08-24-k';
+const BUILD = '2026-08-24-m';
 /* =====================================================================
    ↑↑↑  nothing below here needs editing  ↑↑↑
    ===================================================================== */
@@ -1417,9 +1417,23 @@ function go(v){
 function renderAll(){
   if(gateNeeded()) showGate();
   renderStrip(); renderFoot(); fillDatalists(); renderNav(); renderSyncUI();
-  ({board:renderBoard, yard:renderYard, ship:renderShip, history:renderHistory,
-    salvage:renderSalvage, tags:renderTags,
-    archive:renderArchive, jobs:renderJobs}[current]||(()=>{}))();
+  // Looked up by name and guarded: one broken screen should never take the
+  // rest of the app down with it.
+  const views = {board:'renderBoard', jobs:'renderJobs', yard:'renderYard',
+    ship:'renderShip', history:'renderHistory', archive:'renderArchive',
+    salvage:'renderSalvage', tags:'renderTags'};
+  const fn = views[current] && window[views[current]];
+  if(typeof fn === 'function'){
+    try{ fn(); }
+    catch(e){
+      console.error(current + ' failed to draw:', e);
+      const body = $('#' + {board:'boardBody', jobs:'jobsBody', yard:'yardBody',
+        history:'histBody', archive:'archBody', salvage:'salvBody',
+        tags:'tagBody', ship:'s-panel'}[current]);
+      if(body) body.innerHTML = `<div class="note-strip"><b>This screen could not be drawn</b><br>
+        ${esc(String(e.message || e))}</div>`;
+    }
+  }
 }
 function toast(msg, kind){
   const el = document.createElement('div');
@@ -1999,6 +2013,171 @@ function groupTable(r, mode){
       <td class="num" style="font-size:11px"><a href="#" data-lot="${esc(l.code)}">${esc(l.code)}</a></td>
     </tr>`).join('')}</tbody></table>
     ${live.length>120?`<p class="hint" style="margin-top:6px">Showing 120 of ${n0(live.length)} lots.</p>`:''}`;
+}
+
+/* =====================================================================
+   JOBS SCREEN
+   ===================================================================== */
+let jobForm = null;      // {mode:'new'|'close'|'rename', name}
+let showClosed = false;
+
+function renderJobs(){
+  const open = openJobs(), closed = closedJobs();
+  const row = (name, isClosed) => {
+    const s = jobStats(name), r = jobRec(name) || {};
+    return `<tr data-job="${esc(name)}">
+      <td><span class="chip ${isClosed?'done':'job'}">${esc(name)}</span>
+        ${r.client?`<div style="font-size:11.5px;color:var(--grey);margin-top:3px">${esc(r.client)}</div>`:''}</td>
+      <td class="r num">${n0(s.live)}</td>
+      <td class="r num"><b>${n0(s.qty)}</b>${s.flagged?`<br><span style="font-size:10px;color:var(--rust)">${s.flagged} to check</span>`:''}</td>
+      <td class="num" style="font-size:11.5px">${s.blocks.slice(0,5).join(' ')||'—'}${
+        s.blocks.length>5?` +${s.blocks.length-5}`:''}</td>
+      <td class="num" style="font-size:11.5px">${dshow(isClosed?r.closed:(r.opened||s.first))}</td>
+      <td class="r" style="white-space:nowrap">
+        ${isClosed
+          ? `<button class="btn ghost sm" data-a="reopen" data-n="${esc(name)}">Reopen</button>`
+          : `<button class="btn ghost sm" data-a="close" data-n="${esc(name)}">Close</button>`}
+        <button class="btn ghost sm" data-a="rename" data-n="${esc(name)}">Rename</button>
+      </td></tr>`;
+  };
+  const table = (list, isClosed, empty) => list.length
+    ? `<div class="tw"><table><thead><tr>
+        <th>Job</th><th class="r">Lots</th><th class="r">On hand</th>
+        <th>Blocks</th><th>${isClosed?'Closed':'Opened'}</th><th></th>
+      </tr></thead><tbody>${list.map(n => row(n, isClosed)).join('')}</tbody></table></div>`
+    : emptyState(empty[0], empty[1]);
+
+  const junk = allJobs().filter(n => /^[-?—]+$/.test(n.trim()));
+  $('#jobsBody').innerHTML = `
+    ${junk.length?`<div class="note-strip"><b>Placeholder job names</b><br>
+      ${junk.map(n=>`<span class="chip">${esc(n)}</span>`).join(' ')} came in from the spreadsheet
+      standing in for “not allocated yet”. Rename one to <b>${esc(HOLD)}</b> to fold its stock into
+      unallocated, or give it a real job name.</div>`:''}
+    <div class="row" style="margin-bottom:16px">
+      <button class="btn go" id="j-new">Open a job</button>
+      ${closed.length?`<button class="btn ghost" id="j-toggle">${
+        showClosed?'Hide':'Show'} ${n0(closed.length)} closed</button>`:''}
+    </div>
+    <div id="jobForm"></div>
+    <h2>Open jobs</h2>
+    ${table(open, false, ['No jobs are open','Open one before the delivery lands so the stock has somewhere to go.'])}
+    ${showClosed && closed.length ? `<h2 style="margin-top:28px">Closed jobs</h2>
+      ${table(closed, true, ['',''])}` : ''}`;
+
+  $('#j-new').onclick = () => { jobForm = {mode:'new'}; drawJobForm(); };
+  if($('#j-toggle')) $('#j-toggle').onclick = () => { showClosed = !showClosed; renderJobs(); };
+  $$('#jobsBody [data-a]').forEach(b => b.onclick = e => {
+    e.stopPropagation();
+    const n = b.dataset.n;
+    if(b.dataset.a === 'reopen'){ reopenJob(n); toast(`${n} reopened`); renderAll(); return; }
+    jobForm = {mode: b.dataset.a, name: n}; drawJobForm();
+  });
+  $$('#jobsBody tr[data-job]').forEach(tr => tr.onclick = e => {
+    if(e.target.closest('button')) return;
+    go('yard');
+    $('#y-group').value = 'lot'; $('#y-job').value = tr.dataset.job;
+    $('#y-status').value = 'all'; renderYard();
+  });
+  if(jobForm) drawJobForm();
+}
+
+function drawJobForm(){
+  const f = jobForm; if(!f) return;
+  const box = $('#jobForm'); if(!box) return;
+  const s = f.name ? jobStats(f.name) : null;
+  const others = openJobs().filter(n => n !== f.name);
+  const body = {
+    new: `<h2>Open a job</h2>
+      <div class="grid g3">
+        <label class="f"><span>Job name</span><input type="text" id="j-name" placeholder="Pine Springs"></label>
+        <label class="f"><span>Client</span><input type="text" id="j-client" placeholder="Optional"></label>
+        <label class="f"><span>Start date</span><input type="date" id="j-date" class="mono" value="${today()}"></label>
+      </div>
+      <label class="f"><span>Notes</span><input type="text" id="j-note" placeholder="Spec revision, contact, anything worth keeping"></label>`,
+    close: `<h2>Close ${esc(f.name)}</h2>
+      ${s.qty > 0
+        ? `<p style="margin:0 0 14px;font-size:13.5px"><b>${n0(s.qty)} plants across ${n0(s.live)} lots
+             are still standing in ${s.blocks.join(', ')||'the yard'}.</b> Decide where they go — closing
+             a job never makes stock disappear.</p>
+           <label class="f"><span>The remaining stock</span><select id="j-mode">
+             <option value="hold">Goes back to ${esc(HOLD)}</option>
+             <option value="move">Moves to another job</option>
+             <option value="keep">Stays allocated to ${esc(f.name)}</option>
+           </select></label>
+           <label class="f" id="j-targetwrap" style="display:none"><span>Move it to</span>
+             <select id="j-target">${others.map(n => `<option>${esc(n)}</option>`).join('')}</select></label>`
+        : `<p style="margin:0 0 14px;font-size:13.5px">Nothing is on hand for this job, so it closes clean.
+             Its ${n0(s.lots)} lots keep their full history.</p>
+           <input type="hidden" id="j-mode" value="keep">`}
+      <div class="grid g2">
+        <label class="f"><span>Closing date</span><input type="date" id="j-date" class="mono" value="${today()}"></label>
+        <label class="f"><span>Note</span><input type="text" id="j-note" placeholder="Why it's closing"></label>
+      </div>`,
+    rename: `<h2>Rename ${esc(f.name)}</h2>
+      <p style="margin:0 0 14px;font-size:13.5px">Renaming onto a name that already exists merges the two.
+        ${n0(s.lots)} lots and their history follow the new name.</p>
+      <div class="grid g2">
+        <label class="f"><span>New name</span><input type="text" id="j-name" list="dl-jobany" value="${esc(f.name)}"></label>
+        <label class="f"><span>Date</span><input type="date" id="j-date" class="mono" value="${today()}"></label>
+      </div>`
+  }[f.mode];
+  const label = {new:'Open job', close:'Close job', rename:'Rename'}[f.mode];
+  box.innerHTML = `<div class="card" style="margin-bottom:18px;border-color:var(--chrome)">
+    ${body}<div class="err" id="j-err"></div>
+    <div class="row" style="margin-top:6px">
+      <button class="btn ${f.mode==='close'?'':'go'}" id="j-go">${label}</button>
+      <button class="btn ghost" id="j-cancel">Cancel</button></div>
+    <datalist id="dl-jobany">${allJobs().concat([HOLD]).map(n => `<option value="${esc(n)}">`).join('')}</datalist>
+  </div>`;
+  const mode = $('#j-mode');
+  if(mode && mode.tagName === 'SELECT') mode.onchange = () =>
+    $('#j-targetwrap').style.display = mode.value === 'move' ? '' : 'none';
+  $('#j-cancel').onclick = () => { jobForm = null; renderJobs(); };
+  $('#j-go').onclick = () => commitJob();
+}
+
+function commitJob(){
+  const f = jobForm;
+  const v = id => { const el = $(id); return el ? el.value.trim() : ''; };
+  const fail = m => { const e = $('#j-err'); e.textContent = m; e.classList.add('on'); };
+  const date = v('#j-date') || today();
+
+  if(f.mode === 'new'){
+    const name = v('#j-name');
+    if(!name) return fail('Give the job a name.');
+    if(name === HOLD) return fail(`${HOLD} is where unallocated stock lives — pick another name.`);
+    if(jobRec(name)) return fail(`${name} already exists.`);
+    const near = allJobs().filter(n => {
+      const a = n.toLowerCase(), b = name.toLowerCase();
+      return a !== b && (a.includes(b) || b.includes(a));
+    });
+    if(near.length && !$('#j-err').dataset.warned){
+      $('#j-err').dataset.warned = '1';
+      return fail(`Close to ${near.slice(0,3).join(', ')}. Press again if this is a different job.`);
+    }
+    openJob(name, v('#j-client'), date, v('#j-note'));
+    toast(`${name} opened`);
+  }
+
+  if(f.mode === 'close'){
+    const mode = v('#j-mode') || 'keep';
+    const target = v('#j-target');
+    if(mode === 'move' && !target) return fail('Pick the job the stock is moving to.');
+    closeJob(f.name, mode, target, date, v('#j-note'));
+    toast(`${f.name} closed`);
+  }
+
+  if(f.mode === 'rename'){
+    const to = v('#j-name');
+    if(!to) return fail('Give it a name.');
+    if(to === f.name) return fail('That is the same name.');
+    const merging = to !== HOLD && jobRec(to);
+    if(merging && !confirm(`${to} already exists. Merge ${f.name} into it? This cannot be undone.`)) return;
+    const n = renameJob(f.name, to, date);
+    toast(`${n0(n)} lots moved to ${to}`);
+  }
+
+  jobForm = null; renderAll();
 }
 
 /* =====================================================================
