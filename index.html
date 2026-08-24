@@ -595,7 +595,7 @@ const SIGNIN_SUFFIX = '@rexius.com';
 
 /* Shown in the bottom corner and on the Data tab. If the version on screen is
    not the one you just uploaded, the browser is serving an older copy. */
-const BUILD = '2026-08-21-h';
+const BUILD = '2026-08-24-k';
 /* =====================================================================
    ↑↑↑  nothing below here needs editing  ↑↑↑
    ===================================================================== */
@@ -966,7 +966,7 @@ function rememberPlant(bot, com, size, cult){
        applies it only if that entry is new, so a retry after a dropped
        connection can never double-count.
    ===================================================================== */
-const SYNC = {busy:false, last:'', err:'', timer:null, remote:null};
+const SYNC = {busy:false, last:'', err:'', timer:null, remote:null, got:null};
 
 /* ---------- sign-in ----------
    Accounts live in Supabase. The anon key below only gets you as far as the
@@ -1206,6 +1206,7 @@ async function syncNow(quiet){
     const s = sb();
     const got = await rpc('rx_pull', {p_since: s.since, p_limit: 5000});
     let n = 0;
+    SYNC.got = (got.lots || []).length;
     (got.lots || []).forEach(r => {
       const lot = fromRow(r), i = DB.lots.findIndex(l => l.id === lot.id);
       if(i < 0) DB.lots.unshift(lot); else DB.lots[i] = lot;
@@ -1229,16 +1230,35 @@ async function syncNow(quiet){
       DB.events.sort((a,b) => String(b.at||'').localeCompare(String(a.at||'')));
     DB.plants.sort((a,b) => a.bot.localeCompare(b.bot));
     DB.jobs.sort((a,b) => a.name.localeCompare(b.name));
-    if(!DB.arch.length){
-      const rows = await rpc('rx_pull_arch');
-      DB.arch = (rows || []).map(r => ({job:r.job||'', bot:r.bot||'', cult:r.cult||'',
-        size:r.size||'', qty:r.qty||0, loc:r.loc||'', grower:r.grower||'',
-        date:r.date||'', pickup:r.pickup||'', note:r.note||''}));
-    }
+    // Write it down NOW. Everything below this line is an extra that can
+    // fail on its own; none of it is allowed to throw away the yard we just
+    // fetched. Persisting last was why a device could pull 1,122 lots and
+    // still come up empty on the next load.
     s.since = got.server_time || s.since;
-    await topUpCodes(false);
     SYNC.last = new Date().toISOString();
     save();
+    renderAll();
+
+    // The completed-projects archive is a nicety. If it is missing or the
+    // call fails, the yard is still good.
+    if(!DB.arch.length && !DB.archChecked){
+      try{
+        const rows = await rpc('rx_pull_arch');
+        if(Array.isArray(rows) && rows.length){
+          DB.arch = rows.map(r => ({job:r.job||'', bot:r.bot||'', cult:r.cult||'',
+            size:r.size||'', qty:r.qty||0, loc:r.loc||'', grower:r.grower||'',
+            date:r.date||'', pickup:r.pickup||'', note:r.note||''}));
+          save();
+        } else DB.archChecked = true;   // genuinely empty; stop asking every time
+      }catch(e){
+        DB.archChecked = true;
+        console.warn('archive fetch skipped:', e.message || e);
+      }
+    }
+
+    // Reserving lot numbers is likewise not worth losing a sync over.
+    try{ await topUpCodes(false); }
+    catch(e){ console.warn('code reservation skipped:', e.message || e); }
     // An empty yard after a clean sync means the database itself is empty, or
     // this device's watermark has run past everything. Say so rather than
     // showing a blank screen and calling it success.
@@ -1395,6 +1415,7 @@ function go(v){
   window.scrollTo(0,0);
 }
 function renderAll(){
+  if(gateNeeded()) showGate();
   renderStrip(); renderFoot(); fillDatalists(); renderNav(); renderSyncUI();
   ({board:renderBoard, yard:renderYard, ship:renderShip, history:renderHistory,
     salvage:renderSalvage, tags:renderTags,
@@ -1455,7 +1476,12 @@ function wireGate(){
       hideGate();
       const stats = await rpc('rx_stats', {}, 15000);
       const remote = Number(stats.lots) || 0;
-      if(remote > 0){ await pullEverything(); migrateJobs(); }
+      if(remote > 0){
+        await pullEverything(); migrateJobs();
+        if(!DB.lots.length)
+          SYNC.err = `Signed in, and the database reports ${n0(remote)} lots, but none `
+                   + `arrived. Press "Test the connection" on the Data tab.`;
+      }
       await topUpCodes(true); startSyncLoop(); save();
       $('#g-go').disabled = false; $('#g-go').textContent = 'Sign in';
       renderAll();
@@ -1486,6 +1512,7 @@ function renderSyncUI(){
   else if(!navigator.onLine){ cls='bad';  txt = pend ? `Offline · ${n0(pend)} waiting` : 'Offline'; }
   else if(SYNC.err)         { cls='bad';  txt='Sync problem'; }
   else if(pend)             { cls='busy'; txt=`${n0(pend)} waiting`; }
+  else if(!signedIn())      { cls='bad';  txt='Not signed in'; }
   else                      { cls='ok';   txt='Synced'; }
   pill.className = 'syncpill ' + cls;
   pill.innerHTML = `<i></i><span>${esc(txt)}</span>`;
@@ -1566,11 +1593,19 @@ function wireSbButtons(){
     lines.push(`Page served from: ${location.protocol === 'file:' ? 'a file on this computer — that will not work' : location.origin}`);
     lines.push(`Browser reports: ${navigator.onLine ? 'online' : 'OFFLINE'}`);
     lines.push(`Project: ${sb().url}`);
-    lines.push(`Signed in as: ${auth().email || 'nobody'}`);
+    lines.push(`Signed in as: ${auth().email || 'NOBODY — that is the problem, sign in first'}`);
+    if(!signedIn()){
+      p.innerHTML = lines.map(esc).join('<br>');
+      return;
+    }
     try{
       const st = await rpc('rx_stats', {}, 15000);
       lines.push(`Database answered: ${n0(st.lots)} lots, ${n0(st.onhand)} plants on hand.`);
+      const probe = await rpc('rx_pull', {p_since:'1970-01-01T00:00:00Z', p_limit: 5});
+      lines.push(`A direct pull returned: ${(probe.lots||[]).length} lot(s) in a 5-row sample.`);
+      lines.push(`Last sync brought back: ${SYNC.got === null ? 'not run yet' : n0(SYNC.got) + ' lots'}`);
       lines.push(`This device holds: ${n0(DB.lots.length)} lots.`);
+      lines.push(`Asking for changes since: ${sb().since}`);
     }catch(e){ lines.push('FAILED: ' + String(e.message || e)); }
     p.innerHTML = lines.map(esc).join('<br>');
   });
@@ -2705,9 +2740,11 @@ function wire(){
   if(gateNeeded()) showGate();
   else if(sbOn()){
     startSyncLoop();
-    // First pull of a session is loud: a silent failure here is how a device
-    // ends up looking empty for no visible reason.
-    syncNow(DB.lots.length > 0).then(() => renderAll());
+    // Nothing on this device means the watermark is worthless — it can only
+    // skip rows. Ask for the lot. A silent failure here is how a device ends
+    // up looking empty for no visible reason, so this one is not quiet.
+    const first = DB.lots.length ? syncNow(true) : pullEverything();
+    first.then(() => { migrateJobs(); renderAll(); });
   }
 })();
 </script>
