@@ -142,7 +142,20 @@ h2{font-family:var(--cond);text-transform:uppercase;letter-spacing:.14em;
 .btn:disabled{opacity:.4;cursor:not-allowed}
 .row{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
 
-label.f{display:block;margin-bottom:14px}
+label.f{display:block;margin-bottom:14px;position:relative}
+.sugg{position:absolute;left:0;right:0;top:100%;z-index:35;background:var(--white);
+  border:1px solid var(--chrome);border-top:0;border-radius:0 0 2px 2px;
+  box-shadow:0 8px 20px rgba(21,48,33,.16);max-height:280px;overflow:auto;display:none}
+.sugg.on{display:block}
+.sugg b{display:block;padding:8px 11px;cursor:pointer;font-weight:400;
+  border-bottom:1px solid var(--hair)}
+.sugg b:last-child{border-bottom:0}
+.sugg b:hover,.sugg b.sel{background:#EEF3EC}
+.sugg .s1{font-family:var(--serif);font-style:italic;font-size:14px}
+.sugg .s2{font-family:var(--cond);text-transform:uppercase;letter-spacing:.07em;
+  font-size:11px;font-weight:700;color:var(--grey)}
+.sugg .s3{font-family:var(--mono);font-size:10.5px;color:var(--grey);float:right}
+.sugg mark{background:#D9EBD6;color:inherit;padding:0 1px}
 label.f>span{display:block;font-family:var(--cond);text-transform:uppercase;
   letter-spacing:.14em;font-size:10px;color:var(--grey);font-weight:700;margin-bottom:4px}
 input[type=text],input[type=number],input[type=date],input[type=search],select,textarea{
@@ -171,7 +184,13 @@ td{padding:10px 12px;border-bottom:1px solid var(--hair);vertical-align:top}
 tbody tr{cursor:pointer}
 tbody tr:hover{background:#F7F8F6}
 tbody tr:last-child td{border-bottom:0}
-td.r,th.r{text-align:right}
+/* A right-aligned figure sitting flush against the next column reads as one
+   run of characters. Numbers get room on the right, and whatever follows gets
+   a hairline and room on the left. */
+td.r,th.r{text-align:right;padding-right:20px}
+td.r+td,th.r+th{padding-left:20px;border-left:1px solid var(--hair)}
+td.r+td.r,th.r+th.r{border-left:0;padding-left:12px}
+th.r:last-child,td.r:last-child{padding-right:12px}
 .empty{padding:44px 20px;text-align:center;color:var(--grey);background:var(--white);
   border:1px dashed var(--line)}
 .empty b{display:block;font-family:var(--cond);text-transform:uppercase;letter-spacing:.14em;
@@ -384,20 +403,19 @@ tr.open .twist{transform:rotate(90deg);color:var(--rex-dk)}
         <div>
           <div class="card">
             <h2>Vital</h2>
-            <div id="r-recent"></div>
             <label class="f"><span>Botanical name</span>
-              <input type="text" id="r-bot" list="dl-bot" autocomplete="off" placeholder="Acer circinatum">
+              <input type="text" id="r-bot" autocomplete="off" spellcheck="false" placeholder="Acer circinatum">
               <div class="hint">Start typing — anything already in the yard fills in below.</div>
             </label>
             <div class="grid g2">
               <label class="f"><span>Cultivar</span>
-                <input type="text" id="r-cult" list="dl-cult" autocomplete="off" placeholder="Aztec Pearl"></label>
+                <input type="text" id="r-cult" autocomplete="off" spellcheck="false" placeholder="Aztec Pearl"></label>
               <label class="f"><span>Common name</span>
-                <input type="text" id="r-com" list="dl-com" autocomplete="off" placeholder="Vine Maple"></label>
+                <input type="text" id="r-com" autocomplete="off" spellcheck="false" placeholder="Vine Maple"></label>
             </div>
             <div class="grid g2">
               <label class="f"><span>Size</span>
-                <input type="text" id="r-size" list="dl-size" class="mono" placeholder="5 gal"></label>
+                <input type="text" id="r-size" autocomplete="off" class="mono" placeholder="5 gal"></label>
               <label class="f"><span>Quantity</span>
                 <input type="number" id="r-qty" class="mono" min="1" step="1" value="1"></label>
             </div>
@@ -618,7 +636,7 @@ const SIGNIN_SUFFIX = '@rexius.com';
 
 /* Shown in the bottom corner and on the Data tab. If the version on screen is
    not the one you just uploaded, the browser is serving an older copy. */
-const BUILD = '2026-08-24-p';
+const BUILD = '2026-08-24-s';
 /* =====================================================================
    ↑↑↑  nothing below here needs editing  ↑↑↑
    ===================================================================== */
@@ -1905,8 +1923,8 @@ function renderYard(){
     openRows.has(k) ? openRows.delete(k) : openRows.add(k);
     renderYard();
   });
-  $$('#yardBody button[data-q]').forEach(b => b.onclick = e => {
-    e.stopPropagation(); queueTag(b.dataset.q);
+  $$('#yardBody button[data-move]').forEach(b => b.onclick = e => {
+    e.stopPropagation(); openLotAt(b.dataset.move, 'move');
   });
   $$('#yardBody [data-lot]').forEach(x => x.onclick = e => {
     e.preventDefault(); e.stopPropagation();
@@ -1945,7 +1963,7 @@ function yardByLot(rows){
     <td>${l.prod?`<span class="chip prod">In production</span>`:l.qty<0?`<span class="chip dead">Check</span>`:''}</td>
     <td class="num" style="font-size:11.5px">${dshow(l.received)}</td>
     ${m?`<td class="r num">${money(l.qty*(l.price||0))}</td>`:''}
-    <td class="r" style="white-space:nowrap"><button class="btn ghost sm" data-q="${l.id}">Tag</button></td>
+    <td class="r" style="white-space:nowrap"><button class="btn ghost sm" data-move="${l.id}">Move</button></td>
   </tr>`).join('')}</tbody></table></div>
   ${rows.length>CAP?`<p class="hint" style="margin-top:8px">Showing the newest ${CAP} of ${n0(rows.length)}. Narrow the filters or export for the rest.</p>`:''}`;
 }
@@ -2055,7 +2073,7 @@ function splitTable(r){
       <td class="num">${esc(l.loc||'—')}</td>
       <td class="r num"><b>${n0(l.qty)}</b>${l.prod?` <span class="chip prod">in prod</span>`:''}</td>
       <td class="num" style="font-size:11px">${esc(l.code)}</td>
-      <td class="r"><button class="btn ghost sm" data-q="${l.id}">Tag</button></td>
+      <td class="r"><button class="btn ghost sm" data-move="${l.id}">Move</button></td>
     </tr>`).join('')}</tbody></table>`;
 }
 
@@ -2074,7 +2092,7 @@ function groupTable(r, mode){
         : `<span class="num">${esc(l.loc||'—')}</span>`}</td>
       <td class="r num"><b>${n0(l.qty)}</b>${l.prod?` <span class="chip prod">in prod</span>`:''}</td>
       <td class="num" style="font-size:11px">${esc(l.code)}</td>
-      <td class="r"><button class="btn ghost sm" data-q="${l.id}">Tag</button></td>
+      <td class="r"><button class="btn ghost sm" data-move="${l.id}">Move</button></td>
     </tr>`).join('')}</tbody></table>
     ${live.length>120?`<p class="hint" style="margin-top:6px">Showing 120 of ${n0(live.length)} lots.</p>`:''}`;
 }
@@ -2340,6 +2358,15 @@ function renderArchive(){
    LOT DRAWER — tag, figures, actions, chain of custody
    ===================================================================== */
 let drawerLot = null;
+/* Straight into an action, for the buttons that sit on a row. */
+function openLotAt(id, action){
+  const l = lotById(id); if(!l) return;
+  drawerLot = l;
+  $('#dtitle').textContent = l.code;
+  drawLot(action);
+  $('#drawer').classList.add('on'); $('#scrim').classList.add('on');
+}
+
 function openLot(id){
   const l = lotById(id); if(!l) return;
   drawerLot = l;
@@ -2731,18 +2758,6 @@ function holdingsFor(bot, cult){
              String(b.received||'').localeCompare(String(a.received||'')))[0]
   };
 }
-/* The combinations most recently received, for one-tap refills. */
-function recentReceipts(n){
-  const seen = new Set(), out = [];
-  DB.events.filter(e => e.type === 'RECEIVE').forEach(e => {
-    const l = lotById(e.lotId); if(!l) return;
-    const k = plantKey(l.bot, l.cult) + '|' + l.size;
-    if(seen.has(k)) return;
-    seen.add(k); out.push(l);
-  });
-  return out.slice(0, n || 6);
-}
-
 /* =====================================================================
    TAG QUEUE + PRINT
    ===================================================================== */
@@ -2871,22 +2886,135 @@ function receiveLike(l){
   setTimeout(() => $('#r-qty').select(), 60);
 }
 
-function renderReceiveAids(){
-  // quick picks: what has come in before
-  const box = $('#r-recent');
-  if(box){
-    const rec = recentReceipts(6);
-    box.innerHTML = rec.length ? `<div class="lab" style="margin-bottom:6px">Received before — tap to fill</div>
-      <div class="pick">${rec.map(l => `<button type="button" data-like="${l.id}">
-        <b>${esc(l.bot)}${l.cult?` \u2018${esc(l.cult)}\u2019`:''}</b>
-        ${l.com?`<span style="text-transform:uppercase;letter-spacing:.06em">${esc(l.com)}</span><br>`:''}
-        <span>${esc(l.size||'—')}${l.loc?` · blk ${esc(l.loc)}`:''}${l.grower?` · ${esc(l.grower)}`:''}</span>
-      </button>`).join('')}</div>` : '';
-    $$('#r-recent [data-like]').forEach(b => b.onclick = () => {
-      const l = lotById(b.dataset.like); if(l) receiveLike(l);
-    });
-  }
+/* =====================================================================
+   TYPE-AHEAD
+   One list of known plants, searched on botanical name, cultivar and common
+   name at once. Picking one fills the whole set of fields, so a common name
+   is a shortcut to the botanical name and the other way round.
+   ===================================================================== */
+function knownPlants(){
+  const m = new Map();
+  const add = (bot, cult, com, size) => {
+    if(!bot) return;
+    const k = plantKey(bot, cult);
+    const e = m.get(k) || {bot:bot||'', cult:cult||'', com:'', size:''};
+    if(!e.com && com) e.com = com;
+    if(!e.size && size) e.size = size;
+    m.set(k, e);
+  };
+  DB.plants.forEach(p => add(p.bot, p.cult, p.com, p.size));
+  DB.lots.forEach(l => add(l.bot, l.cult, l.com, l.size));
+  return Array.from(m.values());
+}
 
+function matchPlants(q, limit){
+  const t = String(q||'').trim().toLowerCase();
+  if(!t) return [];
+  const words = t.split(/\s+/);
+  const out = [];
+  knownPlants().forEach(p => {
+    const bot = p.bot.toLowerCase(), cult = (p.cult||'').toLowerCase(),
+          com = (p.com||'').toLowerCase(), all = bot + ' ' + cult + ' ' + com;
+    let score = -1;
+    if(bot.startsWith(t)) score = 0;
+    else if(com.startsWith(t)) score = 1;
+    else if(cult.startsWith(t)) score = 2;
+    else if(bot.includes(t)) score = 3;
+    else if(com.includes(t)) score = 4;
+    else if(cult.includes(t)) score = 5;
+    else if(words.length > 1 && words.every(w => all.includes(w))) score = 6;
+    if(score >= 0) out.push({p, score});
+  });
+  out.sort((a,b) => a.score - b.score
+    || a.p.bot.localeCompare(b.p.bot)
+    || (a.p.cult||'').localeCompare(b.p.cult||''));
+  return out.slice(0, limit || 8).map(x => x.p);
+}
+
+const hl = (text, q) => {
+  const t = String(text||''), n = String(q||'').trim();
+  if(!n) return esc(t);
+  const i = t.toLowerCase().indexOf(n.toLowerCase());
+  if(i < 0) return esc(t);
+  return esc(t.slice(0,i)) + '<mark>' + esc(t.slice(i, i+n.length)) + '</mark>'
+       + esc(t.slice(i+n.length));
+};
+
+/* Attaches a dropdown to one field. `build` turns the typed text into rows;
+   `pick` receives the chosen row's value. */
+function attachSuggest(inputSel, build, pick){
+  const input = $(inputSel); if(!input || input.dataset.sugg) return;
+  input.dataset.sugg = '1';
+  const box = document.createElement('div');
+  box.className = 'sugg';
+  input.parentNode.appendChild(box);
+  let items = [], at = -1;
+
+  const rows = () => Array.from(box.querySelectorAll('b'));
+  const close = () => { box.classList.remove('on'); box.innerHTML = ''; at = -1; };
+  const draw = () => {
+    items = build(input.value) || [];
+    if(!items.length) return close();
+    at = -1;
+    box.innerHTML = items.map((it,i) => `<b data-i="${i}">${it.html}</b>`).join('');
+    box.classList.add('on');
+    rows().forEach(el => {
+      el.onmousedown = e => { e.preventDefault(); choose(+el.dataset.i); };
+    });
+  };
+  const choose = i => { const it = items[i]; if(!it) return; close(); pick(it.value); };
+
+  input.addEventListener('input', draw);
+  input.addEventListener('focus', draw);
+  input.addEventListener('blur', () => setTimeout(close, 150));
+  input.addEventListener('keydown', e => {
+    if(!box.classList.contains('on')) return;
+    if(e.key === 'ArrowDown' || e.key === 'ArrowUp'){
+      e.preventDefault();
+      at += (e.key === 'ArrowDown' ? 1 : -1);
+      if(at < 0) at = items.length - 1;
+      if(at >= items.length) at = 0;
+      rows().forEach((el,i) => el.classList.toggle('sel', i === at));
+      const sel = box.querySelector('b.sel'); if(sel) sel.scrollIntoView({block:'nearest'});
+    } else if(e.key === 'Enter' && at >= 0){ e.preventDefault(); choose(at); }
+    else if(e.key === 'Escape') close();
+  });
+}
+
+/* Choosing a plant fills every name field at once — that is the shortcut. */
+function fillPlant(p){
+  $('#r-bot').value = p.bot || '';
+  $('#r-cult').value = p.cult || '';
+  $('#r-com').value = p.com || '';
+  if(!$('#r-size').value && p.size) $('#r-size').value = p.size;
+  previewTag(); renderReceiveAids();
+  const next = $('#r-size').value ? '#r-qty' : '#r-size';
+  const el = $(next); if(el){ el.focus(); if(el.select) el.select(); }
+}
+
+function wireSuggest(){
+  const row = (p, q) => `<span class="s3">${esc(p.size||'')}</span>`
+    + `<span class="s1">${hl(p.bot, q)}${p.cult?` \u2018${hl(p.cult, q)}\u2019`:''}</span>`
+    + (p.com ? `<span class="s2">${hl(p.com, q)}</span>` : '');
+
+  ['#r-bot', '#r-cult', '#r-com'].forEach(sel =>
+    attachSuggest(sel,
+      v => matchPlants(v, 8).map(p => ({html: row(p, v), value: p})),
+      p => fillPlant(p)));
+
+  attachSuggest('#r-size',
+    v => {
+      const t = String(v||'').trim().toLowerCase();
+      return uniqSorted(DB.lots.map(l => l.size).concat(knownPlants().map(p => p.size)))
+        .filter(s => !t || s.toLowerCase().includes(t)).slice(0, 10)
+        .map(s => ({html:`<span class="s1" style="font-style:normal;font-family:var(--mono)">${hl(s, v)}</span>`,
+                    value:s}));
+    },
+    s => { $('#r-size').value = s; previewTag(); renderReceiveAids();
+           const q = $('#r-qty'); q.focus(); q.select(); });
+}
+
+function renderReceiveAids(){
   // what the yard already holds of the plant being typed
   const hold = $('#r-holdings'); if(!hold) return;
   const bot = $('#r-bot').value.trim(), cult = $('#r-cult').value.trim();
@@ -2970,12 +3098,19 @@ function wire(){
     allocRows.push({qty: Math.max(0, total - used) || '', job: HOLD});
     renderAlloc(); previewTag();
   };
-  $('#r-bot').addEventListener('change', () => {
-    const p = DB.plants.find(x => x.bot.toLowerCase() === $('#r-bot').value.trim().toLowerCase());
-    if(p){ if(!$('#r-com').value) $('#r-com').value = p.com;
-           if(!$('#r-cult').value && p.cult) $('#r-cult').value = p.cult;
-           if(!$('#r-size').value && p.size) $('#r-size').value = p.size; previewTag(); }
+  // Typed in full and tabbed away: complete the rest from the known plant.
+  const settle = (sel, field) => $(sel).addEventListener('blur', () => {
+    const v = $(sel).value.trim(); if(!v) return;
+    const hit = knownPlants().find(p => String(p[field]||'').toLowerCase() === v.toLowerCase());
+    if(!hit) return;
+    if(field !== 'bot' && !$('#r-bot').value) $('#r-bot').value = hit.bot;
+    if(field !== 'com' && !$('#r-com').value) $('#r-com').value = hit.com || '';
+    if(!$('#r-cult').value && hit.cult) $('#r-cult').value = hit.cult;
+    if(!$('#r-size').value && hit.size) $('#r-size').value = hit.size;
+    previewTag(); renderReceiveAids();
   });
+  settle('#r-bot', 'bot');
+  settle('#r-com', 'com');
   $('#r-clear').onclick = clearReceive;
   $('#r-save').onclick = () => {
     const f = readReceive(), err = $('#r-err');
@@ -3143,7 +3278,7 @@ function wire(){
     deviceId(); save();
   }
   migrateJobs();
-  wire(); wireGate(); renderAlloc(); previewTag(); renderReceiveAids(); go('board');
+  wire(); wireGate(); wireSuggest(); renderAlloc(); previewTag(); renderReceiveAids(); go('board');
   if(gateNeeded()) showGate();
   else if(sbOn()){
     startSyncLoop();
