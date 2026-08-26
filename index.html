@@ -703,7 +703,7 @@ const SIGNIN_SUFFIX = '@rexius.com';
 
 /* Shown in the bottom corner and on the Data tab. If the version on screen is
    not the one you just uploaded, the browser is serving an older copy. */
-const BUILD = '2026-08-26-ac';
+const BUILD = '2026-08-26-ad';
 /* =====================================================================
    ↑↑↑  nothing below here needs editing  ↑↑↑
    ===================================================================== */
@@ -1014,14 +1014,14 @@ function transfer(lot, qty, toJob, toLoc, date, note){
   const child = Object.assign({}, lot, {
     id: uid(), code: `${lot.code}.${kids+1}`, parent: lot.code,
     job: toJob, loc: toLoc || lot.loc, qtyIn: qty, qty, shipped: 0, lost: 0,
-    created: new Date().toISOString()
+    note: '', created: new Date().toISOString()
   });
   lot.qty -= qty;
   DB.lots.unshift(child);
   const evP = logEvent(lot, 'TRANSFER', qty, `${n0(qty)} split off to ${toJob} as ${child.code}`,
     {date, job: toJob, from: fromJob, loc: lot.loc, note});
   const evC = logEvent(child, 'RECEIVE', qty, `Split from ${lot.code}, allocated to ${toJob}`,
-    {date, job: toJob, loc: child.loc});
+    {date, job: toJob, loc: child.loc, from: fromJob, parent: lot.code, note});
   outbox({kind:'lot', lot:child},
     {kind:'move', lot_id:lot.id, d_qty:-qty, event:evP},
     {kind:'move', lot_id:child.id, event:evC});
@@ -1059,7 +1059,7 @@ function produce(lot, qty, newSize, date, note, price){
     size: newSize, qtyIn: qty, qty, shipped: 0, lost: 0,
     price: (price === undefined || price === null || price === '') ? (lot.price || 0) : price,
     prod: true, prodFrom: lot.size, prodStart: date || today(),
-    ready: '', received: date || today(), note: note || '',
+    ready: '', received: date || today(), note: '',
     created: new Date().toISOString()
   });
   DB.lots.unshift(child);
@@ -1069,7 +1069,8 @@ function produce(lot, qty, newSize, date, note, price){
     {date, job: lot.job, loc: lot.loc, note});
   const evC = logEvent(child, 'PRODUCE', qty,
     `Potted up from ${lot.size} out of ${lot.code} — in production`,
-    {date, job: child.job, loc: child.loc, value: qty * (child.price||0)});
+    {date, job: child.job, loc: child.loc, parent: lot.code, note,
+     value: qty * (child.price||0)});
   outbox({kind:'lot', lot:child},
     {kind:'move', lot_id:lot.id, d_qty:-qty, event:evP},
     {kind:'move', lot_id:child.id, event:evC});
@@ -2564,10 +2565,45 @@ function openLot(id){
 function closeDrawer(){
   $('#drawer').classList.remove('on'); $('#scrim').classList.remove('on'); drawerLot = null;
 }
+/* A split lot's own beginning: the movement that created it. Older splits
+   predate the explicit link, so fall back to the parent's event that names
+   this lot's code. */
+function originOf(lot){
+  if(!lot.parent) return null;
+  const own = DB.events.filter(e => e.lotId === lot.id)
+    .filter(e => e.type === 'RECEIVE' || e.type === 'PRODUCE');
+  const mine = own[own.length - 1];
+  const parent = lotByCode(lot.parent);
+  let src = mine;
+  if(!mine || !mine.note){
+    const fromParent = parent && DB.events.find(e => e.lotId === parent.id
+      && (e.type === 'TRANSFER' || e.type === 'PRODUCE')
+      && String(e.text || '').includes(lot.code));
+    if(fromParent) src = Object.assign({}, mine || {}, {
+      note: fromParent.note || (mine && mine.note) || '',
+      date: (mine && mine.date) || fromParent.date,
+      from: fromParent.from || (mine && mine.from) || '',
+      qty: (mine && mine.qty) || fromParent.qty
+    });
+  }
+  if(!src) return null;
+  return {
+    parent: lot.parent,
+    kind: lot.prodFrom ? 'production' : 'reallocation',
+    date: src.date || lot.received || '',
+    qty: src.qty || lot.qtyIn || 0,
+    from: src.from || '',
+    to: lot.job || HOLD,
+    note: src.note || '',
+    prodFrom: lot.prodFrom || ''
+  };
+}
+
 function drawLot(form){
   const l = drawerLot; if(!l) return;
   const hist = DB.events.filter(e => e.lotId === l.id);
   const kids = DB.lots.filter(x => x.parent === l.code);
+  const org = originOf(l);
   $('#dbody').innerHTML = `
     ${l.prod?`<div class="note-strip" style="background:#F9F2E6;border-color:#DEC79B;border-left-color:var(--bark)">
       <b>In production</b><br>Potted up from ${esc(l.prodFrom||'')} on ${dshow(l.prodStart)}.
@@ -2587,6 +2623,21 @@ function drawLot(form){
       <button class="btn ghost sm" data-a="tag">Queue tag</button>
     </div>
     <div id="dform"></div>
+    ${org ? `<h2 style="margin-top:24px">Where this lot came from</h2>
+      <div class="card" style="padding:14px 16px;border-left:4px solid var(--rex-dk)">
+        <p style="margin:0 0 8px;font-size:13.5px">
+          <b>${n0(org.qty)}</b> ${org.kind === 'production'
+            ? `potted up from ${esc(org.prodFrom)}`
+            : `split off${org.from ? ` from ${esc(org.from)}` : ''}`}
+          ${org.kind === 'production' ? '' : ` to <b>${esc(org.to)}</b>`}
+          on ${esc(dshow(org.date))}.</p>
+        ${org.note
+          ? `<p style="margin:0 0 10px;font-size:14px;padding:9px 12px;background:var(--paper);
+              border-radius:2px"><span class="lab" style="display:block;margin-bottom:2px">Reason given</span>
+              ${esc(org.note)}</p>`
+          : `<p style="margin:0 0 10px;font-size:12.5px;color:var(--grey)">No reason was recorded.</p>`}
+        <button class="btn ghost sm" data-goto="${esc(org.parent)}">Open ${esc(org.parent)}</button>
+      </div>` : ''}
     <h2 style="margin-top:24px">Figures</h2>
     <div class="card" style="padding:14px 16px">
       <div class="grid g4" style="gap:12px">
@@ -2598,8 +2649,7 @@ function drawLot(form){
            <span class="num" style="font-size:15px">${esc(v)}</span></div>`).join('')}
       </div>
       ${l.note?`<p style="margin:14px 0 0;font-size:13px;border-top:1px solid var(--hair);padding-top:12px">${esc(l.note)}</p>`:''}
-      ${l.parent?`<p style="margin:12px 0 0;font-size:12px" class="num">Split from
-        <a href="#" data-goto="${esc(l.parent)}">${esc(l.parent)}</a></p>`:''}
+
       ${kids.length?`<p style="margin:12px 0 0;font-size:12px" class="num">Split into
         ${kids.map(k=>`<a href="#" data-goto="${esc(k.code)}">${esc(k.code)}</a>`).join(', ')}</p>`:''}
     </div>
