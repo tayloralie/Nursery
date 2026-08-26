@@ -729,7 +729,7 @@ const SIGNIN_SUFFIX = '@rexius.com';
 
 /* Shown in the bottom corner and on the Data tab. If the version on screen is
    not the one you just uploaded, the browser is serving an older copy. */
-const BUILD = '2026-08-26-ap';
+const BUILD = '2026-08-26-aq';
 /* =====================================================================
    ↑↑↑  nothing below here needs editing  ↑↑↑
    ===================================================================== */
@@ -2370,7 +2370,6 @@ function wireJobSelects(root){
    ===================================================================== */
 let jobForm = null;      // {mode:'new'|'close'|'rename'|'add', name}
 let addPick = {};        // lot id -> quantity being taken for the job
-let showClosed = false;
 
 function renderJobs(){
   const open = openJobs(), closed = closedJobs();
@@ -2407,17 +2406,14 @@ function renderJobs(){
       unallocated, or give it a real job name.</div>`:''}
     <div class="row" style="margin-bottom:16px">
       <button class="btn go" id="j-new">Open a job</button>
-      ${closed.length?`<button class="btn ghost" id="j-toggle">${
-        showClosed?'Hide':'Show'} ${n0(closed.length)} closed</button>`:''}
+      ${closed.length?`<span class="hint" style="align-self:center">${n0(closed.length)} closed
+        ${closed.length===1?'job is':'jobs are'} on the Completed tab.</span>`:''}
     </div>
     <div id="jobForm"></div>
     <h2>Open jobs</h2>
-    ${table(open, false, ['No jobs are open','Open one before the delivery lands so the stock has somewhere to go.'])}
-    ${showClosed && closed.length ? `<h2 style="margin-top:28px">Closed jobs</h2>
-      ${table(closed, true, ['',''])}` : ''}`;
+    ${table(open, false, ['No jobs are open','Open one before the delivery lands so the stock has somewhere to go.'])}`;
 
   $('#j-new').onclick = () => { jobForm = {mode:'new'}; drawJobForm(); };
-  if($('#j-toggle')) $('#j-toggle').onclick = () => { showClosed = !showClosed; renderJobs(); };
   $$('#jobsBody [data-a]').forEach(b => b.onclick = e => {
     e.stopPropagation();
     const n = b.dataset.n;
