@@ -192,7 +192,7 @@ tbody tr:last-child td{border-bottom:0}
    the digits on a common width. */
 td.r,th.r{text-align:center;padding-left:18px;padding-right:18px;
   font-variant-numeric:tabular-nums}
-td.r+td,th.r+th{padding-left:18px;border-left:1px solid var(--hair)}
+td.r+td,th.r+th{padding-left:18px}
 td.r+td.r,th.r+th.r{border-left:0}
 th.r:last-child,td.r:last-child{padding-right:12px}
 .empty{padding:44px 20px;text-align:center;color:var(--grey);background:var(--white);
@@ -640,14 +640,14 @@ const SIGNIN_SUFFIX = '@rexius.com';
 
 /* Shown in the bottom corner and on the Data tab. If the version on screen is
    not the one you just uploaded, the browser is serving an older copy. */
-const BUILD = '2026-08-26-u';
+const BUILD = '2026-08-26-w';
 /* =====================================================================
    ↑↑↑  nothing below here needs editing  ↑↑↑
    ===================================================================== */
 
 const KEY = 'rexius:yard:v1';
 const HOLD = 'Unassigned';                    // the no-job bucket, named as the yard names it
-const TYPES = ['RECEIVE','SHIP','RETURN','TRANSFER','MOVE','PRODUCE','CONFIRM','SALVAGE','RENAME','JOB'];
+const TYPES = ['RECEIVE','SHIP','RETURN','TRANSFER','MOVE','PRODUCE','CONFIRM','SALVAGE','EDIT','RENAME','JOB'];
 const REASONS = ['Died','Damaged'];
 
 const BLANK = () => ({lots:[], events:[], plants:[], jobs:[], locs:[], growers:[],
@@ -1019,6 +1019,57 @@ function confirmProduction(lot, price, date, note){
     {date, job: lot.job, loc: lot.loc, note, value: lot.qty * price});
   outbox({kind:'move', lot_id:lot.id, set:{prod:false, price:price, ready:'Yes'}, event:ev});
   save();
+}
+
+/* Correcting what a plant is called, rather than moving any of it. Nothing
+   about the quantities changes; the ledger records what was altered so a
+   later reader can tell a correction from a movement. */
+function editLot(lot, f, applyAll){
+  const before = {bot:lot.bot, cult:lot.cult||'', com:lot.com||'', size:lot.size||'',
+                  loc:lot.loc||'', grower:lot.grower||'', price:lot.price||0,
+                  received:lot.received||'', note:lot.note||''};
+  const nameChanged = f.bot !== before.bot || f.cult !== before.cult || f.com !== before.com;
+  const targets = [lot];
+
+  if(applyAll && nameChanged){
+    const k = plantKey(before.bot, before.cult, before.com);
+    DB.lots.forEach(l => { if(l !== lot && plantKey(l.bot, l.cult, l.com) === k) targets.push(l); });
+  }
+
+  targets.forEach(l => {
+    const was = {bot:l.bot, cult:l.cult||'', com:l.com||'', size:l.size||'',
+                 loc:l.loc||'', grower:l.grower||'', price:l.price||0,
+                 received:l.received||'', note:l.note||''};
+    // Only the plant's name travels to the other lots; the rest is this lot's own.
+    const next = (l === lot) ? f : Object.assign({}, was,
+      {bot:f.bot, cult:f.cult, com:f.com});
+
+    const changes = [];
+    const label = {bot:'botanical name', cult:'cultivar', com:'common name',
+                   size:'size', loc:'block', grower:'grower', price:'price each',
+                   received:'date received', note:'note'};
+    Object.keys(label).forEach(key => {
+      const a = was[key], b = next[key];
+      if(String(a) === String(b)) return;
+      changes.push(`${label[key]} ${a === '' || a === 0 ? '(blank)'
+        : key === 'price' ? money(a) : a} \u2192 ${b === '' || b === 0 ? '(blank)'
+        : key === 'price' ? money(b) : b}`);
+      l[key] = b;
+    });
+    if(!changes.length) return;
+
+    const ev = logEvent(l, 'EDIT', 0, `Details corrected — ${changes.join('; ')}`,
+      {date: today(), job: l.job, loc: l.loc});
+    outbox({kind:'move', lot_id:l.id, event:ev, set:{
+      bot:l.bot, cult:l.cult||'', com:l.com||'', size:l.size||'', loc:l.loc||'',
+      grower:l.grower||'', price:l.price||0, received:l.received||'', note:l.note||''}});
+  });
+
+  rememberPlant(f.bot, f.com, f.size, f.cult);
+  if(f.loc) DB.locs = uniqSorted(DB.locs.concat(f.loc));
+  if(f.grower) DB.growers = uniqSorted(DB.growers.concat(f.grower));
+  save();
+  return targets.length;
 }
 
 function rememberPlant(bot, com, size, cult){
@@ -1930,7 +1981,7 @@ function renderYard(){
     renderYard();
   });
   $$('#yardBody button[data-move]').forEach(b => b.onclick = e => {
-    e.stopPropagation(); openLotAt(b.dataset.move, 'move');
+    e.stopPropagation(); openLotAt(b.dataset.move, 'edit');
   });
   $$('#yardBody [data-lot]').forEach(x => x.onclick = e => {
     e.preventDefault(); e.stopPropagation();
@@ -1969,7 +2020,7 @@ function yardByLot(rows){
     <td>${l.prod?`<span class="chip prod">In production</span>`:l.qty<0?`<span class="chip dead">Check</span>`:''}</td>
     <td class="num" style="font-size:11.5px">${dshow(l.received)}</td>
     ${m?`<td class="r num">${money(l.qty*(l.price||0))}</td>`:''}
-    <td class="r" style="white-space:nowrap"><button class="btn ghost sm" data-move="${l.id}">Move</button></td>
+    <td class="r" style="white-space:nowrap"><button class="btn ghost sm" data-move="${l.id}">Edit</button></td>
   </tr>`).join('')}</tbody></table></div>
   ${rows.length>CAP?`<p class="hint" style="margin-top:8px">Showing the newest ${CAP} of ${n0(rows.length)}. Narrow the filters or export for the rest.</p>`:''}`;
 }
@@ -2079,7 +2130,7 @@ function splitTable(r){
       <td class="num">${esc(l.loc||'—')}</td>
       <td class="r num"><b>${n0(l.qty)}</b>${l.prod?` <span class="chip prod">in prod</span>`:''}</td>
       <td class="num" style="font-size:11px">${esc(l.code)}</td>
-      <td class="r"><button class="btn ghost sm" data-move="${l.id}">Move</button></td>
+      <td class="r"><button class="btn ghost sm" data-move="${l.id}">Edit</button></td>
     </tr>`).join('')}</tbody></table>`;
 }
 
@@ -2098,7 +2149,7 @@ function groupTable(r, mode){
         : `<span class="num">${esc(l.loc||'—')}</span>`}</td>
       <td class="r num"><b>${n0(l.qty)}</b>${l.prod?` <span class="chip prod">in prod</span>`:''}</td>
       <td class="num" style="font-size:11px">${esc(l.code)}</td>
-      <td class="r"><button class="btn ghost sm" data-move="${l.id}">Move</button></td>
+      <td class="r"><button class="btn ghost sm" data-move="${l.id}">Edit</button></td>
     </tr>`).join('')}</tbody></table>
     ${live.length>120?`<p class="hint" style="margin-top:6px">Showing 120 of ${n0(live.length)} lots.</p>`:''}`;
 }
@@ -2401,6 +2452,7 @@ function drawLot(form){
       <button class="btn ghost sm" data-a="return">Return</button>
       <button class="btn sm" data-a="produce" ${l.qty>0&&!l.prod?'':'disabled'}>Production</button>
       <button class="btn ghost sm" data-a="receive">Receive more</button>
+      <button class="btn ghost sm" data-a="edit">Edit details</button>
       <button class="btn danger sm" data-a="salvage" ${l.qty?'':'disabled'}>Salvage</button>
       <button class="btn ghost sm" data-a="tag">Queue tag</button>
     </div>
@@ -2493,6 +2545,43 @@ function lotAction(kind){
       <label class="f"><span>Note</span><input type="text" id="f-note" placeholder="Who potted it, what mix"></label>
       <p class="hint">Leaves ${esc(l.size)} inventory and opens a new lot at the bigger size, tagged
         In-Production until you confirm it is job ready.</p>`,
+    edit: `<h2>Correct the details</h2>
+      <p style="margin:0 0 14px;font-size:13px;color:var(--grey)">For fixing a typo or a name that
+        came across wrong. Quantities are untouched — use Ship, Salvage or Reallocate to move stock.</p>
+      <div class="grid g2">
+        <label class="f"><span>Botanical name</span>
+          <input type="text" id="f-bot" value="${esc(l.bot||'')}" autocomplete="off"></label>
+        <label class="f"><span>Cultivar</span>
+          <input type="text" id="f-cult" value="${esc(l.cult||'')}" autocomplete="off"></label>
+      </div>
+      <div class="grid g2">
+        <label class="f"><span>Common name</span>
+          <input type="text" id="f-com" value="${esc(l.com||'')}" autocomplete="off"></label>
+        <label class="f"><span>Size</span>
+          <input type="text" id="f-size" class="mono" value="${esc(l.size||'')}" autocomplete="off"></label>
+      </div>
+      <div class="grid g3">
+        <label class="f"><span>Block</span>
+          <input type="text" id="f-loc" list="dl-loc" value="${esc(l.loc||'')}"></label>
+        <label class="f"><span>Grower</span>
+          <input type="text" id="f-grow" list="dl-grow" value="${esc(l.grower||'')}"></label>
+        <label class="f"><span>Price each</span>
+          <input type="number" id="f-price" class="mono" min="0" step="0.01" value="${l.price||''}"></label>
+      </div>
+      <label class="f"><span>Date received</span>
+        <input type="date" id="f-date" class="mono" value="${esc(l.received||'')}"></label>
+      <label class="f"><span>Note</span>
+        <input type="text" id="f-note" value="${esc(l.note||'')}"></label>
+      ${(() => {
+        const k = plantKey(l.bot, l.cult, l.com);
+        const others = DB.lots.filter(x => x !== l && plantKey(x.bot, x.cult, x.com) === k).length;
+        return others ? `<label class="f" style="display:flex;gap:9px;align-items:flex-start">
+          <input type="checkbox" id="f-all" style="width:auto;min-height:0;margin-top:3px" checked>
+          <span style="text-transform:none;letter-spacing:0;font-size:13px;color:var(--basalt);
+            font-family:var(--body);font-weight:400">Apply the name change to the other
+            ${n0(others)} lot${others===1?'':'s'} filed under this name too — use this to fix a
+            spelling everywhere at once.</span></label>` : '';
+      })()}`,
     confirm: `<h2>Confirm job ready</h2>
       <p style="margin:0 0 14px;font-size:13.5px">${n0(l.qty)} × ${esc(l.size)} potted up from
         ${esc(l.prodFrom||'')} on ${dshow(l.prodStart)}. Enter what each one now costs with the
@@ -2518,7 +2607,7 @@ function lotAction(kind){
   };
   const labels = {ship:'Ship it', transfer:'Reallocate', move:'Move it',
     return:'Return it', produce:'Start production', confirm:'Confirm ready',
-    salvage:'Write it off'};
+    salvage:'Write it off', edit:'Save corrections'};
   $('#dform').innerHTML = `<div class="card" style="margin-top:14px;border-color:var(--basalt)">
     ${forms[kind]}<div class="err" id="f-err"></div>
     <div class="row" style="margin-top:6px">
@@ -2577,6 +2666,17 @@ function commit(kind){
     const c = produce(l, qty, size, date, note, price);
     toast(`${n0(qty)} into production as ${size}`);
     drawerLot = c; $('#dtitle').textContent = c.code;
+  }
+  if(kind === 'edit'){
+    const bot = val('#f-bot');
+    if(!bot) return fail('A botanical name is required.');
+    const price = val('#f-price') === '' ? 0 : Number(val('#f-price'));
+    if(!(price >= 0)) return fail('Price each must be a number, or blank.');
+    const all = $('#f-all') ? $('#f-all').checked : false;
+    const n = editLot(l, {bot, cult: val('#f-cult'), com: val('#f-com'),
+      size: val('#f-size'), loc: val('#f-loc'), grower: val('#f-grow'),
+      price, received: val('#f-date'), note}, all);
+    toast(n > 1 ? `Corrected ${n0(n)} lots` : `${l.code} corrected`);
   }
   if(kind === 'confirm'){
     const price = Number(val('#f-price'));
