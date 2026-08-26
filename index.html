@@ -729,7 +729,7 @@ const SIGNIN_SUFFIX = '@rexius.com';
 
 /* Shown in the bottom corner and on the Data tab. If the version on screen is
    not the one you just uploaded, the browser is serving an older copy. */
-const BUILD = '2026-08-26-aq';
+const BUILD = '2026-08-26-ar';
 /* =====================================================================
    ↑↑↑  nothing below here needs editing  ↑↑↑
    ===================================================================== */
@@ -2406,8 +2406,6 @@ function renderJobs(){
       unallocated, or give it a real job name.</div>`:''}
     <div class="row" style="margin-bottom:16px">
       <button class="btn go" id="j-new">Open a job</button>
-      ${closed.length?`<span class="hint" style="align-self:center">${n0(closed.length)} closed
-        ${closed.length===1?'job is':'jobs are'} on the Completed tab.</span>`:''}
     </div>
     <div id="jobForm"></div>
     <h2>Open jobs</h2>
