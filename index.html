@@ -187,9 +187,13 @@ tbody tr:last-child td{border-bottom:0}
 /* A right-aligned figure sitting flush against the next column reads as one
    run of characters. Numbers get room on the right, and whatever follows gets
    a hairline and room on the left. */
-td.r,th.r{text-align:right;padding-right:20px}
-td.r+td,th.r+th{padding-left:20px;border-left:1px solid var(--hair)}
-td.r+td.r,th.r+th.r{border-left:0;padding-left:12px}
+/* Figures are centred in their column, with a hairline and room on either
+   side so a number never runs into the text beside it. Tabular numerals keep
+   the digits on a common width. */
+td.r,th.r{text-align:center;padding-left:18px;padding-right:18px;
+  font-variant-numeric:tabular-nums}
+td.r+td,th.r+th{padding-left:18px;border-left:1px solid var(--hair)}
+td.r+td.r,th.r+th.r{border-left:0}
 th.r:last-child,td.r:last-child{padding-right:12px}
 .empty{padding:44px 20px;text-align:center;color:var(--grey);background:var(--white);
   border:1px dashed var(--line)}
@@ -636,7 +640,7 @@ const SIGNIN_SUFFIX = '@rexius.com';
 
 /* Shown in the bottom corner and on the Data tab. If the version on screen is
    not the one you just uploaded, the browser is serving an older copy. */
-const BUILD = '2026-08-24-s';
+const BUILD = '2026-08-26-u';
 /* =====================================================================
    ↑↑↑  nothing below here needs editing  ↑↑↑
    ===================================================================== */
@@ -979,23 +983,25 @@ function salvage(lot, qty, reason, date, note){
 /* Production: stepping a plant up a pot size. The smaller stock leaves
    inventory and a new lot is born at the new size, tagged In-Production
    until someone confirms it is job ready and prices the labour in. */
-function produce(lot, qty, newSize, date, note){
+function produce(lot, qty, newSize, date, note, price){
   lot.qty -= qty;
   const kids = DB.lots.filter(l => l.parent === lot.code).length;
   const child = Object.assign({}, lot, {
     id: uid(), code: `${lot.code}.${kids+1}`, parent: lot.code,
     size: newSize, qtyIn: qty, qty, shipped: 0, lost: 0,
+    price: (price === undefined || price === null || price === '') ? (lot.price || 0) : price,
     prod: true, prodFrom: lot.size, prodStart: date || today(),
     ready: '', received: date || today(), note: note || '',
     created: new Date().toISOString()
   });
   DB.lots.unshift(child);
   const evP = logEvent(lot, 'PRODUCE', qty,
-    `${n0(qty)} pulled for production — ${lot.size} stepping up to ${newSize} as ${child.code}`,
+    `${n0(qty)} pulled for production — ${lot.size} stepping up to ${newSize} as ${child.code}`
+      + (child.price ? ` at ${money(child.price)} each` : ''),
     {date, job: lot.job, loc: lot.loc, note});
   const evC = logEvent(child, 'PRODUCE', qty,
     `Potted up from ${lot.size} out of ${lot.code} — in production`,
-    {date, job: child.job, loc: child.loc});
+    {date, job: child.job, loc: child.loc, value: qty * (child.price||0)});
   outbox({kind:'lot', lot:child},
     {kind:'move', lot_id:lot.id, d_qty:-qty, event:evP},
     {kind:'move', lot_id:child.id, event:evC});
@@ -1017,9 +1023,9 @@ function confirmProduction(lot, price, date, note){
 
 function rememberPlant(bot, com, size, cult){
   if(!bot) return;
-  const key = (bot + '|' + (cult||'')).toLowerCase();
-  const hit = DB.plants.find(p => (p.bot + '|' + (p.cult||'')).toLowerCase() === key);
-  if(hit){ if(com && !hit.com) hit.com = com; if(size && !hit.size) hit.size = size; }
+  const key = plantKey(bot, cult, com);
+  const hit = DB.plants.find(p => plantKey(p.bot, p.cult, p.com) === key);
+  if(hit){ if(size && !hit.size) hit.size = size; }
   else { const p = {id: uid(), bot, cult: cult||'', com: com||'', size: size||''};
          DB.plants.push(p); outbox({kind:'plant', plant:p}); }
   DB.plants.sort((a,b) => a.bot.localeCompare(b.bot));
@@ -1904,7 +1910,7 @@ function renderYard(){
     <div><span class="k">On projects</span><span class="v">${n0(qty - unalloc)}</span></div>
     <div><span class="k">${esc(HOLD)}</span><span class="v">${n0(unalloc)}</span></div>
     <div><span class="k">Kinds of plant</span><span class="v">${
-      n0(new Set(rows.map(l => plantKey(l.bot,l.cult))).size)}</span></div>
+      n0(new Set(rows.map(lotKey)).size)}</span></div>
     ${prod?`<div><span class="k">In production</span><span class="v" style="color:var(--bark)">${n0(prod)}</span></div>`:''}
   </div>`;
 
@@ -1972,7 +1978,7 @@ function yardByLot(rows){
 function yardByPlant(rows){
   const m = new Map();
   rows.forEach(l => {
-    const k = plantKey(l.bot, l.cult);
+    const k = lotKey(l);
     let r = m.get(k);
     if(!r){ r = {bot:l.bot, cult:l.cult, com:l.com, lots:[], qty:0, unalloc:0, prod:0,
                  jobs:new Set(), locs:new Set(), sizes:new Set(), cleared:0}; m.set(k, r); }
@@ -2026,7 +2032,7 @@ function yardByGroup(rows, mode){
     r.lots.push(l);
     if(l.qty > 0){
       r.qty += l.qty;
-      r.plants.add(plantKey(l.bot, l.cult));
+      r.plants.add(lotKey(l));
       r.other.add(mode === 'loc' ? (l.job || HOLD) : (l.loc || '—'));
       if(l.prod) r.prod += l.qty;
     }
@@ -2477,19 +2483,26 @@ function lotAction(kind){
           <input type="text" id="f-size" list="dl-size" placeholder="e.g. 2g" autocomplete="off"></label>
       </div>
       <div class="grid g2">
+        <label class="f"><span>Cost each once potted up</span>
+          <input type="number" id="f-price" class="mono" min="0" step="0.01"
+            value="${l.price ? l.price : ''}" placeholder="0.00">
+          <div class="hint">${l.price ? `Currently ${money(l.price)} each at ${esc(l.size)}. `
+            : ''}Pot, media and labour included. Can be changed when you confirm it.</div></label>
         <label class="f"><span>Date started</span><input type="date" id="f-date" class="mono" value="${today()}"></label>
-        <label class="f"><span>Note</span><input type="text" id="f-note" placeholder="Who potted it, what mix"></label>
       </div>
+      <label class="f"><span>Note</span><input type="text" id="f-note" placeholder="Who potted it, what mix"></label>
       <p class="hint">Leaves ${esc(l.size)} inventory and opens a new lot at the bigger size, tagged
-        In-Production. Confirm it later to price in the labour and release it for shipping.</p>`,
+        In-Production until you confirm it is job ready.</p>`,
     confirm: `<h2>Confirm job ready</h2>
       <p style="margin:0 0 14px;font-size:13.5px">${n0(l.qty)} × ${esc(l.size)} potted up from
         ${esc(l.prodFrom||'')} on ${dshow(l.prodStart)}. Enter what each one now costs with the
         potting, media, and labour included.</p>
       <div class="grid g2">
-        <label class="f"><span>Finished price each</span>
+        <label class="f"><span>Finished cost each</span>
           <input type="number" id="f-price" class="mono" min="0" step="0.01"
-            value="${l.price||''}" placeholder="0.00"></label>
+            value="${l.price||''}" placeholder="0.00">
+          <div class="hint">${l.price ? `Set to ${money(l.price)} when production started — `
+            + `change it if the real cost differed.` : 'Pot, media and labour included.'}</div></label>
         <label class="f"><span>Date ready</span><input type="date" id="f-date" class="mono" value="${today()}"></label>
       </div>
       <label class="f"><span>Note</span><input type="text" id="f-note" placeholder="Grade, condition, anything worth recording"></label>`,
@@ -2558,7 +2571,10 @@ function commit(kind){
     if(!size) return fail('Name the size it is stepping up to.');
     if(size.toLowerCase() === (l.size||'').toLowerCase())
       return fail('That is the size it already is.');
-    const c = produce(l, qty, size, date, note);
+    const rawPrice = val('#f-price');
+    const price = rawPrice === '' ? undefined : Number(rawPrice);
+    if(price !== undefined && !(price >= 0)) return fail('Cost each must be a number, or left blank.');
+    const c = produce(l, qty, size, date, note, price);
     toast(`${n0(qty)} into production as ${size}`);
     drawerLot = c; $('#dtitle').textContent = c.code;
   }
@@ -2737,12 +2753,14 @@ function renderSalvage(){
 /* =====================================================================
    PLANT LOOKUP HELPERS  (shared by the yard and the receive screen)
    ===================================================================== */
-function plantKey(bot, cult){
-  return (String(bot||'').toLowerCase() + '|' + String(cult||'').toLowerCase());
+function plantKey(bot, cult, com){
+  const t = s => String(s||'').trim().toLowerCase();
+  return t(bot) + '|' + t(cult) + '|' + t(com);
 }
-function holdingsFor(bot, cult){
-  const k = plantKey(bot, cult);
-  const ls = DB.lots.filter(l => plantKey(l.bot, l.cult) === k && l.qty > 0);
+const lotKey = l => plantKey(l.bot, l.cult, l.com);
+function holdingsFor(bot, cult, com){
+  const k = plantKey(bot, cult, com);
+  const ls = DB.lots.filter(l => lotKey(l) === k && l.qty > 0);
   const by = (f) => {
     const m = new Map();
     ls.forEach(l => m.set(f(l), (m.get(f(l)) || 0) + l.qty));
@@ -2896,9 +2914,8 @@ function knownPlants(){
   const m = new Map();
   const add = (bot, cult, com, size) => {
     if(!bot) return;
-    const k = plantKey(bot, cult);
-    const e = m.get(k) || {bot:bot||'', cult:cult||'', com:'', size:''};
-    if(!e.com && com) e.com = com;
+    const k = plantKey(bot, cult, com);
+    const e = m.get(k) || {bot:bot||'', cult:cult||'', com:com||'', size:''};
     if(!e.size && size) e.size = size;
     m.set(k, e);
   };
@@ -3017,9 +3034,10 @@ function wireSuggest(){
 function renderReceiveAids(){
   // what the yard already holds of the plant being typed
   const hold = $('#r-holdings'); if(!hold) return;
-  const bot = $('#r-bot').value.trim(), cult = $('#r-cult').value.trim();
+  const bot = $('#r-bot').value.trim(), cult = $('#r-cult').value.trim(),
+        com = $('#r-com').value.trim();
   if(!bot){ hold.innerHTML = ''; return; }
-  const h = holdingsFor(bot, cult);
+  const h = holdingsFor(bot, cult, com);
   if(!h.qty){
     hold.innerHTML = `<div class="held" style="background:var(--paper);border-color:var(--line);
       border-left-color:var(--grey)"><div class="hd">New to the yard</div>
@@ -3031,8 +3049,8 @@ function renderReceiveAids(){
       pairs.length>4?` +${pairs.length-4}`:''}</td></tr>`;
   hold.innerHTML = `<div class="held">
     <div class="hd">Already on hand — ${n0(h.qty)} in ${n0(h.lots.length)} lot${h.lots.length===1?'':'s'}</div>
-    ${h.lots[0] && h.lots[0].com ? `<div style="font-family:var(--cond);text-transform:uppercase;
-      letter-spacing:.08em;font-size:12px;font-weight:700;margin:-4px 0 8px">${esc(h.lots[0].com)}</div>` : ''}
+    ${com ? `<div style="font-family:var(--cond);text-transform:uppercase;
+      letter-spacing:.08em;font-size:12px;font-weight:700;margin:-4px 0 8px">${esc(com)}</div>` : ''}
     <table>${row('Sizes', h.sizes)}${row('Blocks', h.locs)}${row('Projects', h.jobs)}</table>
     <div class="use">
       ${h.last ? `<button type="button" data-fill="last">Match the last one${
