@@ -540,6 +540,7 @@ tr.open .twist{transform:rotate(90deg);color:var(--rex-dk)}
           <option value="gone">Cleared out</option>
         </select></label>
         <button class="btn ghost sm" id="y-clear" style="margin-bottom:0">Clear filters</button>
+        <button class="btn ghost sm" id="y-print" style="margin-bottom:0">Print</button>
         <button class="btn ghost sm" id="y-csv" style="margin-bottom:0">Export CSV</button>
       </div>
       <div id="yardBody"></div>
@@ -718,7 +719,7 @@ const SIGNIN_SUFFIX = '@rexius.com';
 
 /* Shown in the bottom corner and on the Data tab. If the version on screen is
    not the one you just uploaded, the browser is serving an older copy. */
-const BUILD = '2026-08-26-af';
+const BUILD = '2026-08-26-ag';
 /* =====================================================================
    ↑↑↑  nothing below here needs editing  ↑↑↑
    ===================================================================== */
@@ -3400,6 +3401,94 @@ function exportJobHistoryCSV(job){
   toast(`${n0(rows.length-1)} lines exported`);
 }
 
+/* Prints exactly what is on screen — same filters, same grouping — so the
+   sheet in your hand matches the list you were just reading. */
+function yardDoc(){
+  const rows = yardLots();
+  if(!rows.length) return '';
+  const group = $('#y-group').value;
+  const qty = rows.reduce((s,l) => s + l.qty, 0);
+  const unalloc = rows.filter(l => (l.job||HOLD) === HOLD).reduce((s,l) => s + l.qty, 0);
+
+  const bits = [];
+  if($('#y-q').value.trim()) bits.push(`matching “${$('#y-q').value.trim()}”`);
+  if($('#y-job').value) bits.push(`project ${$('#y-job').value}`);
+  if($('#y-loc').value) bits.push(`block ${$('#y-loc').value}`);
+  if($('#y-size').value) bits.push(`size ${$('#y-size').value}`);
+  const stat = {live:'', all:'including cleared lots', unalloc:`${HOLD} only`,
+    prod:'in production', warn:'needing attention', gone:'cleared out'}[$('#y-status').value];
+  if(stat) bits.push(stat);
+
+  const keyOf = l => group === 'plant' ? sortName(l)
+    : group === 'loc' ? (l.loc || 'No block')
+    : group === 'job' ? (l.job || HOLD) : null;
+
+  const sorted = rows.slice().sort((a,b) => {
+    if(group === 'loc') return String(a.loc||'').localeCompare(String(b.loc||''), undefined, {numeric:true}) || byName(a,b);
+    if(group === 'job') return ((a.job||HOLD) === HOLD) - ((b.job||HOLD) === HOLD)
+      || (a.job||HOLD).localeCompare(b.job||HOLD, undefined, {numeric:true}) || byName(a,b);
+    return byName(a,b) || String(a.loc||'').localeCompare(String(b.loc||''), undefined, {numeric:true});
+  });
+
+  let last = null, run = 0, body = '';
+  const flush = () => {
+    if(last !== null && group)
+      body += `<tr><td colspan="5" style="text-align:right;font-family:var(--mono);
+        font-size:8.5pt;border-bottom:1px solid #000">${n0(run)}</td><td></td></tr>`;
+  };
+  sorted.forEach(l => {
+    const k = keyOf(l);
+    if(group && k !== last){
+      flush();
+      last = k; run = 0;
+      body += `<tr class="grp"><td colspan="6">${esc(k)}</td></tr>`;
+    }
+    run += l.qty;
+    body += `<tr>
+      <td>${group === 'plant'
+        ? `<span class="com">${esc(l.com||'')}</span>`
+        : `<span class="bot">${esc(l.bot)}</span>${l.cult?` \u2018${esc(l.cult)}\u2019`:''}${
+            l.com?`<span class="com"> ${esc(l.com)}</span>`:''}`}</td>
+      <td>${esc(l.size||'')}</td>
+      <td class="r">${n0(l.qty)}</td>
+      <td>${esc(group === 'job' ? (l.loc||'') : (l.job||HOLD))}</td>
+      <td>${esc(group === 'loc' ? (l.job||HOLD) : (l.loc||''))}</td>
+      <td>${esc(l.code)}${l.prod?' · in production':''}</td>
+    </tr>`;
+  });
+  flush();
+
+  const head = {plant:'Common name', loc:'Plant', job:'Plant', lot:'Plant'}[group] || 'Plant';
+  return `<div class="doc">
+    <div class="dh"><b>Yard${bits.length ? ' — ' + bits.join(', ') : ''}</b>
+      <span class="who">Rexius Nursery · ${esc(dshow(today()))}</span></div>
+    <div class="tally">
+      <span><i>plants</i> <b>${n0(qty)}</b></span>
+      <span><i>lots</i> ${n0(rows.length)}</span>
+      <span><i>kinds</i> ${n0(new Set(rows.map(lotKey)).size)}</span>
+      <span><i>on projects</i> ${n0(qty - unalloc)}</span>
+      <span><i>${esc(HOLD.toLowerCase())}</i> ${n0(unalloc)}</span>
+    </div>
+    <table><thead><tr>
+      <th>${esc(head)}</th><th>Size</th><th class="r">Qty</th>
+      <th>${esc(group === 'job' ? 'Block' : 'Project')}</th>
+      <th>${esc(group === 'loc' ? 'Project' : 'Block')}</th><th>Lot</th>
+    </tr></thead><tbody>${body}</tbody>
+    <tfoot><tr><td colspan="2">Total</td><td class="r">${n0(qty)}</td>
+      <td colspan="3"></td></tr></tfoot></table>
+  </div>`;
+}
+
+function printYard(){
+  const html = yardDoc();
+  if(!html) return toast('Nothing to print — no lot matches the filters', 'bad');
+  $('#docsheet').innerHTML = html;
+  document.body.classList.add('pr-doc');
+  document.body.classList.remove('pr-tags');
+  window.print();
+  setTimeout(() => document.body.classList.remove('pr-doc'), 500);
+}
+
 function renderExportPanel(){
   const sel = $('#x-job'); if(!sel) return;
   const keep = sel.value;
@@ -3842,6 +3931,7 @@ function wire(){
   ['#y-q','#y-group','#y-job','#y-loc','#y-size','#y-status'].forEach(s =>
     $(s).addEventListener('input', renderYard));
   $('#y-clear').onclick = clearYardFilters;
+  $('#y-print').onclick = printYard;
   // Escape in the search box clears everything, for the keyboard-minded.
   $('#y-q').addEventListener('keydown', e => {
     if(e.key === 'Escape'){ e.preventDefault(); clearYardFilters(); }
