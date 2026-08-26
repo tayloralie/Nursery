@@ -584,11 +584,15 @@ tr.open .twist{transform:rotate(90deg);color:var(--rex-dk)}
 
     <section class="view" id="v-archive">
       <h1>Completed projects</h1>
-      <p class="sub">Finished work carried over from the spreadsheet, frozen as it arrived. Jobs you close inside the app stay on the Jobs screen with their history intact.</p>
+      <p class="sub">Every job that has been closed, and the whole account of what happened on it.
+        Tap one to open its breakdown.</p>
       <div class="filters">
         <label class="f grow"><span>Search</span>
-          <input type="search" id="a-q" placeholder="Plant, project, block, grower…"></label>
-        <label class="f"><span>Project</span><select id="a-job"></select></label>
+          <input type="search" id="a-q" placeholder="Project name, client…"></label>
+        <label class="f"><span>Show</span><select id="a-job">
+          <option value="closed">Closed projects</option>
+          <option value="all">Every project</option>
+        </select></label>
         <button class="btn ghost sm" id="a-csv" style="margin-bottom:0">Export CSV</button>
       </div>
       <div id="archBody"></div>
@@ -719,7 +723,7 @@ const SIGNIN_SUFFIX = '@rexius.com';
 
 /* Shown in the bottom corner and on the Data tab. If the version on screen is
    not the one you just uploaded, the browser is serving an older copy. */
-const BUILD = '2026-08-26-ag';
+const BUILD = '2026-08-26-ak';
 /* =====================================================================
    ↑↑↑  nothing below here needs editing  ↑↑↑
    ===================================================================== */
@@ -1640,6 +1644,7 @@ function go(v){
 function renderAll(){
   if(gateNeeded()) showGate();
   renderStrip(); renderFoot(); fillDatalists(); renderNav(); renderSyncUI();
+  refreshJobSelects(false);
   // Looked up by name and guarded: one broken screen should never take the
   // rest of the app down with it.
   const views = {board:'renderBoard', jobs:'renderJobs', yard:'renderYard',
@@ -2314,6 +2319,22 @@ function jobSelectHTML(id, value, opts){
   </select>`;
 }
 
+let jobSelSig = '';
+function refreshJobSelects(force){
+  const sig = openJobs().join('\u0001');
+  if(!force && sig === jobSelSig) return;   // nothing new to show
+  jobSelSig = sig;
+  $$('select.jobsel').forEach(sel => {
+    const cur = sel.value === '__new' ? (sel.dataset.prev || HOLD) : sel.value;
+    const first = sel.options[0];
+    const blank = first && first.value === '' ? first.textContent : null;
+    sel.innerHTML = jobSelectHTML('x', cur, blank ? {blank} : {})
+      .replace(/^<select[^>]*>/, '').replace(/<\/select>$/, '');
+    sel.value = cur;
+    sel.dataset.prev = cur;
+  });
+}
+
 /* Choosing "new" asks for the name, opens the job for real, and selects it. */
 function wireJobSelects(root){
   $$((root || '') + ' select.jobsel').forEach(sel => {
@@ -2325,17 +2346,13 @@ function wireJobSelects(root){
       const name = (prompt('Name of the new project') || '').trim();
       if(!name || name === HOLD){ sel.value = sel.dataset.prev || HOLD; return; }
       if(!jobRec(name)) openJob(name, '', today(), '');
-      // rebuild every job picker on the page so the new name appears in all
-      const keep = name;
-      $$('select.jobsel').forEach(other => {
-        const v = other === sel ? keep : other.value;
-        const blank = other.options[0] && other.options[0].value === ''
-          ? other.options[0].textContent : null;
-        other.innerHTML = jobSelectHTML('x', v, blank ? {blank} : {})
-          .replace(/^<select[^>]*>/, '').replace(/<\/select>$/, '');
-        other.value = v;
-        other.dataset.prev = v;
-      });
+      sel.value = name; sel.dataset.prev = name;
+      refreshJobSelects(true);          // the new name has to appear in all of them
+      sel.value = name;
+      if(sel.id && sel.id.startsWith('r-job-')){
+        const i = +sel.id.split('-').pop();
+        if(allocRows[i]) allocRows[i].job = name;
+      }
       renderNav(); renderStrip();
       toast(`${name} opened`);
     });
@@ -2362,10 +2379,10 @@ function renderJobs(){
         s.blocks.length>5?` +${s.blocks.length-5}`:''}</td>
       <td class="num" style="font-size:11.5px">${dshow(isClosed?r.closed:(r.opened||s.first))}</td>
       <td class="r" style="white-space:nowrap">
-        ${isClosed ? '' : `<button class="btn sm" data-a="add" data-n="${esc(name)}">Add plants</button>`}
+        ${isClosed ? '' : `<button class="btn go sm" data-a="add" data-n="${esc(name)}">Add plants</button>`}
         ${isClosed
           ? `<button class="btn ghost sm" data-a="reopen" data-n="${esc(name)}">Reopen</button>`
-          : `<button class="btn ghost sm" data-a="close" data-n="${esc(name)}">Close</button>`}
+          : `<button class="btn danger sm" data-a="close" data-n="${esc(name)}">Close</button>`}
         <button class="btn ghost sm" data-a="rename" data-n="${esc(name)}">Rename</button>
       </td></tr>`;
   };
@@ -2470,17 +2487,18 @@ function updateAddSum(){
 function drawJobForm(){
   const f = jobForm; if(!f) return;
   const box = $('#jobForm'); if(!box) return;
-  const s = f.name ? jobStats(f.name) : null;
+  const s = f.name ? jobStats(f.name)
+    : {lots:0, live:0, qty:0, blocks:[], first:'', flagged:0};
   const others = openJobs().filter(n => n !== f.name);
-  const body = {
-    new: `<h2>Open a job</h2>
+  const body = ({
+    new: () => `<h2>Open a job</h2>
       <div class="grid g3">
         <label class="f"><span>Job name</span><input type="text" id="j-name" placeholder="Pine Springs"></label>
         <label class="f"><span>Client</span><input type="text" id="j-client" placeholder="Optional"></label>
         <label class="f"><span>Start date</span><input type="date" id="j-date" class="mono" value="${today()}"></label>
       </div>
       <label class="f"><span>Notes</span><input type="text" id="j-note" placeholder="Spec revision, contact, anything worth keeping"></label>`,
-    close: `<h2>Close ${esc(f.name)}</h2>
+    close: () => `<h2>Close ${esc(f.name)}</h2>
       ${s.qty > 0
         ? `<p style="margin:0 0 14px;font-size:13.5px"><b>${n0(s.qty)} plants across ${n0(s.live)} lots
              are still standing in ${s.blocks.join(', ')||'the yard'}.</b> Decide where they go — closing
@@ -2499,7 +2517,7 @@ function drawJobForm(){
         <label class="f"><span>Closing date</span><input type="date" id="j-date" class="mono" value="${today()}"></label>
         <label class="f"><span>Note</span><input type="text" id="j-note" placeholder="Why it's closing"></label>
       </div>`,
-    add: `<h2>Add plants to ${esc(f.name)}</h2>
+    add: () => `<h2>Add plants to ${esc(f.name)}</h2>
       <p style="margin:0 0 12px;font-size:13.5px;color:var(--grey)">Everything currently
         ${esc(HOLD)}. Enter how many of each to put on this job — take part of a lot and it
         splits, keeping both halves' history.</p>
@@ -2522,20 +2540,20 @@ function drawJobForm(){
         <label class="f"><span>Reason</span>
           <input type="text" id="j-note" placeholder="Why these are going to this job"></label>
       </div>`,
-    rename: `<h2>Rename ${esc(f.name)}</h2>
+    rename: () => `<h2>Rename ${esc(f.name)}</h2>
       <p style="margin:0 0 14px;font-size:13.5px">Renaming onto a name that already exists merges the two.
         ${n0(s.lots)} lots and their history follow the new name.</p>
       <div class="grid g2">
         <label class="f"><span>New name</span><input type="text" id="j-name" list="dl-jobany" value="${esc(f.name)}"></label>
         <label class="f"><span>Date</span><input type="date" id="j-date" class="mono" value="${today()}"></label>
       </div>`
-  }[f.mode];
+  })[f.mode]();
   const label = {new:'Open job', close:'Close job', rename:'Rename',
     add:'Allocate to this job'}[f.mode];
   box.innerHTML = `<div class="card" style="margin-bottom:18px;border-color:var(--chrome)">
     ${body}<div class="err" id="j-err"></div>
     <div class="row" style="margin-top:6px">
-      <button class="btn ${f.mode==='close'?'':'go'}" id="j-go">${label}</button>
+      <button class="btn ${f.mode==='close'?'danger':'go'}" id="j-go">${label}</button>
       <button class="btn ghost" id="j-cancel">Cancel</button></div>
     <datalist id="dl-jobany">${allJobs().concat([HOLD]).map(n => `<option value="${esc(n)}">`).join('')}</datalist>
   </div>`;
@@ -2614,540 +2632,149 @@ function commitJob(){
    ARCHIVE — completed projects carried over from the spreadsheet
    ===================================================================== */
 function renderArchive(){
-  const sel = $('#a-job');
-  if(!sel.options.length){
-    const jobs = uniqSorted(DB.arch.map(a => a.job));
-    sel.innerHTML = `<option value="">Every project</option>` +
-      jobs.map(v => `<option>${esc(v)}</option>`).join('');
-  }
-  const q = $('#a-q').value.trim().toLowerCase(), fj = sel.value;
-  const rows = DB.arch.filter(a => {
-    if(fj && a.job !== fj) return false;
-    if(q){
-      const hay = [a.bot,a.cult,a.size,a.job,a.loc,a.grower,a.note].join(' ').toLowerCase();
-      if(!hay.includes(q)) return false;
-    }
-    return true;
-  });
-  if(!rows.length){
+  const q = $('#a-q').value.trim().toLowerCase();
+  const which = $('#a-job').value || 'closed';
+  const names = (which === 'closed' ? closedJobs() : allJobs().concat([HOLD]))
+    .filter(n => {
+      if(!q) return true;
+      const r = jobRec(n) || {};
+      return (n + ' ' + (r.client||'') + ' ' + (r.note||'')).toLowerCase().includes(q);
+    })
+    .sort((a,b) => (a === HOLD) - (b === HOLD)
+      || a.localeCompare(b, undefined, {numeric:true}));
+
+  if(!names.length){
     $('#archBody').innerHTML = emptyState(
-      DB.arch.length ? 'Nothing matches' : 'The archive is empty',
-      DB.arch.length ? 'Try a different plant or project name.'
-                     : 'Completed projects load from Supabase once you are signed in.');
+      which === 'closed' ? 'No projects have been closed yet' : 'Nothing matches',
+      which === 'closed'
+        ? 'Close a job on the Jobs screen and its full account appears here.'
+        : 'Try a different name.');
     return;
   }
-  const CAP = 300;
-  rows.sort((a,b) => (a.job||'').localeCompare(b.job||'') ||
-    (a.bot||'').localeCompare(b.bot||''));
+
+  const rows = names.map(name => {
+    const r = jobRec(name) || {};
+    const m = jobMovements(name);
+    const t = k => m[k].reduce((s,e) => s + e.qty, 0);
+    const held = projectLots(name).reduce((s,l) => s + l.qty, 0);
+    const open = openRows.has('a:' + name);
+    return `<tr data-open="a:${esc(name)}" class="${open?'open':''}">
+      <td><span class="twist">\u203A</span> <span class="chip ${r.closed?'done':(name===HOLD?'hold':'job')}">${esc(name)}</span>
+        ${r.client?`<div style="font-size:11.5px;color:var(--grey);margin-top:3px">${esc(r.client)}</div>`:''}</td>
+      <td class="num" style="font-size:11.5px">${dshow(r.opened)}</td>
+      <td class="num" style="font-size:11.5px">${r.closed?dshow(r.closed):'—'}</td>
+      <td class="r num">${n0(t('received') + t('onFrom'))}</td>
+      <td class="r num"><b>${n0(t('shipped'))}</b></td>
+      <td class="r num">${t('offTo')?n0(t('offTo')):'—'}</td>
+      <td class="r num">${t('salvaged')?n0(t('salvaged')):'—'}</td>
+      <td class="r num">${held?`<b>${n0(held)}</b>`:'—'}</td>
+    </tr>
+    ${open?`<tr class="exp"><td colspan="8"><div class="inner">${jobBreakdown(name)}</div></td></tr>`:''}`;
+  }).join('');
+
   $('#archBody').innerHTML = `<div class="tw"><table><thead><tr>
-    <th>Project</th><th>Plant</th><th>Size</th><th class="r">Qty</th>
-    <th>Block</th><th>Grower</th><th>Date</th><th>Picked up</th><th>Notes</th>
-  </tr></thead><tbody>${rows.slice(0,CAP).map(a => `<tr style="cursor:default">
-    <td><span class="chip job">${esc(a.job||'—')}</span></td>
-    <td>${nameHTML(a)}</td><td class="num">${esc(a.size)}</td>
-    <td class="r num">${n0(a.qty)}</td><td class="num">${esc(a.loc||'—')}</td>
-    <td style="font-size:12.5px">${esc(a.grower||'—')}</td>
-    <td class="num" style="font-size:11.5px">${dshow(a.date)}</td>
-    <td class="num" style="font-size:11.5px">${dshow(a.pickup)}</td>
-    <td style="font-size:12px;color:var(--grey)">${esc(a.note||'')}</td>
-  </tr>`).join('')}</tbody></table></div>
-  <p class="hint" style="margin-top:8px">${n0(rows.length)} records${
-    rows.length>CAP?` — showing the first ${CAP}. Export for the full set.`:''}</p>`;
+    <th>Project</th><th>Opened</th><th>Closed</th>
+    <th class="r">In</th><th class="r">Shipped</th><th class="r">Taken off</th>
+    <th class="r">Salvaged</th><th class="r">Still held</th>
+  </tr></thead><tbody>${rows}</tbody></table></div>
+  ${DB.arch.length?`<h2 style="margin-top:28px">Carried over from the spreadsheet</h2>
+    <p class="hint" style="margin-bottom:10px">${n0(DB.arch.length)} finished rows imported with
+      no movement history behind them.</p>
+    <div class="tw" style="max-height:340px;overflow:auto"><table><thead><tr>
+      <th>Project</th><th>Plant</th><th>Size</th><th class="r">Qty</th><th>Block</th><th>Date</th>
+    </tr></thead><tbody>${DB.arch.slice(0,200).map(x => `<tr style="cursor:default">
+      <td>${esc(x.job||'—')}</td><td>${nameHTML(x)}</td><td class="num">${esc(x.size||'')}</td>
+      <td class="r num">${n0(x.qty)}</td><td class="num">${esc(x.loc||'')}</td>
+      <td class="num" style="font-size:11.5px">${dshow(x.date)}</td></tr>`).join('')}
+    </tbody></table></div>`:''}`;
+
+  $$('#archBody tr[data-open]').forEach(tr => tr.onclick = e => {
+    if(e.target.closest('button') || e.target.closest('a')) return;
+    const k = tr.dataset.open;
+    openRows.has(k) ? openRows.delete(k) : openRows.add(k);
+    renderArchive();
+  });
+  $$('#archBody [data-print]').forEach(b => b.onclick = e => {
+    e.stopPropagation();
+    const html = jobHistoryDoc(b.dataset.print, 'plant');
+    if(!html) return toast('Nothing recorded for that project', 'bad');
+    $('#docsheet').innerHTML = html;
+    document.body.classList.add('pr-doc'); document.body.classList.remove('pr-tags');
+    window.print();
+    setTimeout(() => document.body.classList.remove('pr-doc'), 500);
+  });
+  $$('#archBody [data-reopen]').forEach(b => b.onclick = e => {
+    e.stopPropagation();
+    const n = b.dataset.reopen;
+    if(!confirm(`Reopen ${n}? It goes back on the Jobs screen and can take stock again.`)) return;
+    reopenJob(n); renderAll(); toast(`${n} reopened`);
+  });
+  $$('#archBody [data-lot]').forEach(x => x.onclick = e => {
+    e.preventDefault(); e.stopPropagation();
+    const l = lotByCode(x.dataset.lot); if(l) openLot(l.id);
+  });
 }
 
-/* =====================================================================
-   LOT DRAWER — tag, figures, actions, chain of custody
-   ===================================================================== */
-let drawerLot = null;
-/* Straight into an action, for the buttons that sit on a row. */
-function openLotAt(id, action){
-  const l = lotById(id); if(!l) return;
-  drawerLot = l;
-  $('#dtitle').textContent = l.code;
-  drawLot(action);
-  $('#drawer').classList.add('on'); $('#scrim').classList.add('on');
-}
+/* The account of one job, on screen: what came, what left, and how. */
+function jobBreakdown(name){
+  const r = jobRec(name) || {};
+  const m = jobMovements(name);
+  const t = k => m[k].reduce((s,e) => s + e.qty, 0);
+  const held = projectLots(name);
+  const heldQty = held.reduce((s,l) => s + l.qty, 0);
 
-function openLot(id){
-  const l = lotById(id); if(!l) return;
-  drawerLot = l;
-  $('#dtitle').textContent = l.code;
-  drawLot();
-  $('#drawer').classList.add('on'); $('#scrim').classList.add('on');
-}
-function closeDrawer(){
-  $('#drawer').classList.remove('on'); $('#scrim').classList.remove('on'); drawerLot = null;
-}
-/* A split lot's own beginning: the movement that created it. Older splits
-   predate the explicit link, so fall back to the parent's event that names
-   this lot's code. */
-function originOf(lot){
-  if(!lot.parent) return null;
-  const own = DB.events.filter(e => e.lotId === lot.id)
-    .filter(e => e.type === 'RECEIVE' || e.type === 'PRODUCE');
-  const mine = own[own.length - 1];
-  const parent = lotByCode(lot.parent);
-  let src = mine;
-  if(!mine || !mine.note){
-    const fromParent = parent && DB.events.find(e => e.lotId === parent.id
-      && (e.type === 'TRANSFER' || e.type === 'PRODUCE')
-      && String(e.text || '').includes(lot.code));
-    if(fromParent) src = Object.assign({}, mine || {}, {
-      note: fromParent.note || (mine && mine.note) || '',
-      date: (mine && mine.date) || fromParent.date,
-      from: fromParent.from || (mine && mine.from) || '',
-      qty: (mine && mine.qty) || fromParent.qty
-    });
-  }
-  if(!src) return null;
-  return {
-    parent: lot.parent,
-    kind: lot.prodFrom ? 'production' : 'reallocation',
-    date: src.date || lot.received || '',
-    qty: src.qty || lot.qtyIn || 0,
-    from: src.from || '',
-    to: lot.job || HOLD,
-    note: src.note || '',
-    prodFrom: lot.prodFrom || ''
+  const evTable = (title, list, destCol, destLabel) => {
+    const qty = list.reduce((s,e) => s + e.qty, 0);
+    if(!list.length) return `<h2 style="margin-top:18px">${esc(title)}</h2>
+      <p class="hint" style="margin:0">Nothing recorded.</p>`;
+    return `<h2 style="margin-top:18px">${esc(title)} — ${n0(qty)} plants</h2>
+      <table><thead><tr><th>Date</th><th>Plant</th><th>Size</th><th class="r">Qty</th>
+        <th>${esc(destCol ? destLabel : 'Block')}</th><th>Lot</th><th>By</th><th>Note</th>
+      </tr></thead><tbody>${list.slice()
+        .sort((a,b) => String(b.date).localeCompare(String(a.date)) || byName(a,b))
+        .map(e => `<tr style="cursor:default" class="${destCol && (e.job||HOLD)===HOLD?'warn':''}">
+          <td class="num" style="font-size:11.5px;white-space:nowrap">${dshow(e.date)}</td>
+          <td>${nameHTML(e)}</td><td class="num">${esc(e.size||'')}</td>
+          <td class="r num"><b>${n0(e.qty)}</b></td>
+          <td>${destCol
+            ? `<span class="chip ${(e.job||HOLD)===HOLD?'hold':'job'}">${esc(e.job||HOLD)}</span>`
+            : `<span class="num">${esc(e.loc||'—')}</span>`}</td>
+          <td class="num" style="font-size:11px"><a href="#" data-lot="${esc(e.lot)}">${esc(e.lot)}</a></td>
+          <td style="font-size:11.5px">${esc(e.done_by?shortName(e.done_by):'')}</td>
+          <td style="font-size:12px;color:var(--grey)">${esc(e.note || e.reason || '')}</td>
+        </tr>`).join('')}</tbody></table>`;
   };
-}
 
-function drawLot(form){
-  const l = drawerLot; if(!l) return;
-  const hist = DB.events.filter(e => e.lotId === l.id);
-  const kids = DB.lots.filter(x => x.parent === l.code);
-  const org = originOf(l);
-  $('#dbody').innerHTML = `
-    ${l.prod?`<div class="note-strip" style="background:#F9F2E6;border-color:#DEC79B;border-left-color:var(--bark)">
-      <b>In production</b><br>Potted up from ${esc(l.prodFrom||'')} on ${dshow(l.prodStart)}.
-      It can't ship until someone confirms it is job ready and enters the finished cost.</div>`:''}
-    ${tagHTML(l)}
-    <div class="row" style="margin:16px 0 4px">
-      ${l.prod
-        ? `<button class="btn go sm" data-a="confirm">Confirm job ready</button>`
-        : `<button class="btn go sm" data-a="ship" ${l.qty?'':'disabled'}>Ship</button>`}
-      <button class="btn sm" data-a="transfer" ${l.qty?'':'disabled'}>Reallocate</button>
-      <button class="btn sm" data-a="move" ${l.qty?'':'disabled'}>Move bed</button>
-      <button class="btn ghost sm" data-a="return">Return</button>
-      <button class="btn sm" data-a="produce" ${l.qty>0&&!l.prod?'':'disabled'}>Production</button>
-      <button class="btn ghost sm" data-a="receive">Receive more</button>
-      <button class="btn ghost sm" data-a="edit">Edit details</button>
-      <button class="btn danger sm" data-a="salvage" ${l.qty?'':'disabled'}>Salvage</button>
-      <button class="btn ghost sm" data-a="tag">Queue tag</button>
+  return `
+    <div class="row" style="margin-bottom:12px">
+      <button class="btn ghost sm" data-print="${esc(name)}">Print this history</button>
+      ${r.closed?`<button class="btn ghost sm" data-reopen="${esc(name)}">Reopen the job</button>`:''}
+      ${r.note?`<span class="hint" style="align-self:center">${esc(r.note)}</span>`:''}
     </div>
-    <div id="dform"></div>
-    ${org ? `<h2 style="margin-top:24px">Where this lot came from</h2>
-      <div class="card" style="padding:14px 16px;border-left:4px solid var(--rex-dk)">
-        <p style="margin:0 0 8px;font-size:13.5px">
-          <b>${n0(org.qty)}</b> ${org.kind === 'production'
-            ? `potted up from ${esc(org.prodFrom)}`
-            : `split off${org.from ? ` from ${esc(org.from)}` : ''}`}
-          ${org.kind === 'production' ? '' : ` to <b>${esc(org.to)}</b>`}
-          on ${esc(dshow(org.date))}.</p>
-        ${org.note
-          ? `<p style="margin:0 0 10px;font-size:14px;padding:9px 12px;background:var(--paper);
-              border-radius:2px"><span class="lab" style="display:block;margin-bottom:2px">Reason given</span>
-              ${esc(org.note)}</p>`
-          : `<p style="margin:0 0 10px;font-size:12.5px;color:var(--grey)">No reason was recorded.</p>`}
-        <button class="btn ghost sm" data-goto="${esc(org.parent)}">Open ${esc(org.parent)}</button>
-      </div>` : ''}
-    <h2 style="margin-top:24px">Figures</h2>
-    <div class="card" style="padding:14px 16px">
-      <div class="grid g4" style="gap:12px">
-        ${[[l.prod?'Potted up':'Received',n0(l.qtyIn)],['On hand',n0(l.qty)],['Shipped',n0(l.shipped)],
-           ['Salvaged',n0(l.lost)],['Price each',money(l.price)],
-           ['Value on hand',money(l.qty*(l.price||0))],['Grower',l.grower||'—'],
-           ['Received on',dshow(l.received)]].map(([k,v]) =>
-          `<div><span class="lab" style="display:block">${k}</span>
-           <span class="num" style="font-size:15px">${esc(v)}</span></div>`).join('')}
-      </div>
-      ${l.note?`<p style="margin:14px 0 0;font-size:13px;border-top:1px solid var(--hair);padding-top:12px">${esc(l.note)}</p>`:''}
-
-      ${kids.length?`<p style="margin:12px 0 0;font-size:12px" class="num">Split into
-        ${kids.map(k=>`<a href="#" data-goto="${esc(k.code)}">${esc(k.code)}</a>`).join(', ')}</p>`:''}
+    <div class="tally-strip">
+      <div><span class="k">Received</span><span class="v">${n0(t('received'))}</span></div>
+      <div><span class="k">Moved on</span><span class="v">${n0(t('onFrom'))}</span></div>
+      <div><span class="k">Shipped out</span><span class="v">${n0(t('shipped'))}</span></div>
+      <div><span class="k">Returned</span><span class="v">${n0(t('returned'))}</span></div>
+      <div><span class="k">Taken off</span><span class="v">${n0(t('offTo'))}</span></div>
+      <div><span class="k">Salvaged</span><span class="v" style="color:var(--rust)">${n0(t('salvaged'))}</span></div>
+      <div><span class="k">Still held</span><span class="v">${n0(heldQty)}</span></div>
     </div>
-    <h2 style="margin-top:24px">Chain of custody</h2>
-    <ul class="tl">${hist.map(e => `<li class="k-${e.type}">
-      <div class="tk">${e.type}${e.reason?` · ${esc(e.reason)}`:''}</div>
-      <div class="td">${dshow(e.date)}${e.job?` · ${esc(e.job)}`:''}${e.done_by?` · ${esc(shortName(e.done_by))}`:''}</div>
-      <div class="tx">${esc(e.text)}</div>
-      ${e.note?`<div class="tx" style="color:var(--grey);font-size:12px">${esc(e.note)}</div>`:''}
-    </li>`).join('')}</ul>`;
-  $$('#dbody [data-a]').forEach(b => b.onclick = () => lotAction(b.dataset.a));
-  $$('#dbody [data-goto]').forEach(a => a.onclick = ev => {
-    ev.preventDefault(); const t = lotByCode(a.dataset.goto); if(t) openLot(t.id);
-  });
-  if(form) lotAction(form);
-}
-
-function lotAction(kind){
-  const l = drawerLot; if(!l) return;
-  if(kind === 'tag'){ queueTag(l.id); return; }
-  if(kind === 'receive'){ closeDrawer(); receiveLike(l); return; }
-  const forms = {
-    ship: `<h2>Ship to ${esc(l.job||HOLD)}</h2>
-      <div class="grid g2">
-        <label class="f"><span>Quantity out</span><input type="number" id="f-qty" class="mono" min="1" max="${l.qty}" value="${l.qty}"></label>
-        <label class="f"><span>Date of transfer</span><input type="date" id="f-date" class="mono" value="${today()}"></label>
-      </div>
-      <label class="f"><span>Note</span><input type="text" id="f-note" placeholder="Truck, crew, delivery ticket…"></label>`,
-    transfer: `<h2>Reallocate</h2>
-      <p style="margin:0 0 12px;font-size:13px;color:var(--grey)">Currently on
-        <b>${esc(l.job || HOLD)}</b>. Send it to another project, or back to ${esc(HOLD)}.</p>
-      <div class="grid g2">
-        <label class="f"><span>Quantity</span><input type="number" id="f-qty" class="mono" min="1" max="${l.qty}" value="${l.qty}"></label>
-        <label class="f"><span>Goes to</span>${jobSelectHTML('f-job', '', {blank:'Choose…'})}</label>
-      </div>
-      <div class="grid g2">
-        <label class="f"><span>Holding place</span><input type="text" id="f-loc" list="dl-loc" value="${esc(l.loc)}"></label>
-        <label class="f"><span>Date</span><input type="date" id="f-date" class="mono" value="${today()}"></label>
-      </div>
-      <label class="f"><span>Reason</span><input type="text" id="f-note" placeholder="Why it's moving"></label>
-      <p class="hint">A partial move splits the lot and gives the new one a code like ${esc(l.code)}.1, so both halves keep their history.</p>`,
-    move: `<h2>Move to another bed</h2>
-      <div class="grid g2">
-        <label class="f"><span>New holding place</span><input type="text" id="f-loc" list="dl-loc" placeholder="Bed 7 / Row A"></label>
-        <label class="f"><span>Date</span><input type="date" id="f-date" class="mono" value="${today()}"></label>
-      </div>
-      <label class="f"><span>Note</span><input type="text" id="f-note"></label>`,
-    return: `<h2>Return from ${esc(l.job||HOLD)}</h2>
-      ${l.shipped ? '' : `<p class="hint" style="margin:-4px 0 12px">Nothing has shipped from this lot,
-        so there is nothing to bring back.</p>`}
-      <div class="grid g2">
-        <label class="f"><span>Quantity back (max ${n0(l.shipped)})</span>
-          <input type="number" id="f-qty" class="mono" min="1" max="${l.shipped}" value="${Math.min(1,l.shipped)}" ${l.shipped?'':'disabled'}></label>
-        <label class="f"><span>Date</span><input type="date" id="f-date" class="mono" value="${today()}"></label>
-      </div>
-      <label class="f"><span>Put it in</span><input type="text" id="f-loc" list="dl-loc" value="${esc(l.loc)}"></label>
-      <label class="f"><span>Note</span><input type="text" id="f-note" placeholder="Overstock, wrong spec, job cancelled…"></label>`,
-    produce: `<h2>Step up to a bigger pot</h2>
-      <div class="grid g2">
-        <label class="f"><span>Quantity to pot up</span>
-          <input type="number" id="f-qty" class="mono" min="1" max="${l.qty}" value="${l.qty}"></label>
-        <label class="f"><span>New size</span>
-          <input type="text" id="f-size" list="dl-size" placeholder="e.g. 2g" autocomplete="off"></label>
-      </div>
-      <div class="grid g2">
-        <label class="f"><span>Cost each once potted up</span>
-          <input type="number" id="f-price" class="mono" min="0" step="0.01"
-            value="${l.price ? l.price : ''}" placeholder="0.00">
-          <div class="hint">${l.price ? `Currently ${money(l.price)} each at ${esc(l.size)}. `
-            : ''}Pot, media and labour included. Can be changed when you confirm it.</div></label>
-        <label class="f"><span>Date started</span><input type="date" id="f-date" class="mono" value="${today()}"></label>
-      </div>
-      <label class="f"><span>Note</span><input type="text" id="f-note" placeholder="Who potted it, what mix"></label>
-      <p class="hint">Leaves ${esc(l.size)} inventory and opens a new lot at the bigger size, tagged
-        In-Production until you confirm it is job ready.</p>`,
-    edit: `<h2>Correct the details</h2>
-      <p style="margin:0 0 14px;font-size:13px;color:var(--grey)">For fixing a typo or a name that
-        came across wrong. Quantities are untouched — use Ship, Salvage or Reallocate to move stock.</p>
-      <div class="grid g2">
-        <label class="f"><span>Botanical name</span>
-          <input type="text" id="f-bot" value="${esc(l.bot||'')}" autocomplete="off"></label>
-        <label class="f"><span>Cultivar</span>
-          <input type="text" id="f-cult" value="${esc(l.cult||'')}" autocomplete="off"></label>
-      </div>
-      <div class="grid g2">
-        <label class="f"><span>Common name</span>
-          <input type="text" id="f-com" value="${esc(l.com||'')}" autocomplete="off"></label>
-        <label class="f"><span>Size</span>
-          <input type="text" id="f-size" class="mono" value="${esc(l.size||'')}" autocomplete="off"></label>
-      </div>
-      <div class="grid g2">
-        <label class="f"><span>On hand</span>
-          <input type="number" id="f-qty" class="mono" step="1" value="${l.qty}">
-          <div class="hint">${n0(l.qtyIn)} received${l.shipped?`, ${n0(l.shipped)} shipped`:''}${
-            l.lost?`, ${n0(l.lost)} salvaged`:''}. Set this to what a physical count found —
-            it stays with this lot only.</div></label>
-        <label class="f"><span>Date received</span>
-          <input type="date" id="f-date" class="mono" value="${esc(l.received||'')}"></label>
-      </div>
-      <div class="grid g3">
-        <label class="f"><span>Block</span>
-          <input type="text" id="f-loc" list="dl-loc" value="${esc(l.loc||'')}"></label>
-        <label class="f"><span>Grower</span>
-          <input type="text" id="f-grow" list="dl-grow" value="${esc(l.grower||'')}"></label>
-        <label class="f"><span>Price each</span>
-          <input type="number" id="f-price" class="mono" min="0" step="0.01" value="${l.price||''}"></label>
-      </div>
-      <label class="f"><span>Note</span>
-        <input type="text" id="f-note" value="${esc(l.note||'')}"></label>
-`,
-    confirm: `<h2>Confirm job ready</h2>
-      <p style="margin:0 0 14px;font-size:13.5px">${n0(l.qty)} × ${esc(l.size)} potted up from
-        ${esc(l.prodFrom||'')} on ${dshow(l.prodStart)}. Enter what each one now costs with the
-        potting, media, and labour included.</p>
-      <div class="grid g2">
-        <label class="f"><span>Finished cost each</span>
-          <input type="number" id="f-price" class="mono" min="0" step="0.01"
-            value="${l.price||''}" placeholder="0.00">
-          <div class="hint">${l.price ? `Set to ${money(l.price)} when production started — `
-            + `change it if the real cost differed.` : 'Pot, media and labour included.'}</div></label>
-        <label class="f"><span>Date ready</span><input type="date" id="f-date" class="mono" value="${today()}"></label>
-      </div>
-      <label class="f"><span>Note</span><input type="text" id="f-note" placeholder="Grade, condition, anything worth recording"></label>`,
-    salvage: `<h2>Write off to salvage</h2>
-      <div class="grid g2">
-        <label class="f"><span>Quantity lost</span><input type="number" id="f-qty" class="mono" min="1" max="${l.qty}" value="${l.qty}"></label>
-        <label class="f"><span>Date</span><input type="date" id="f-date" class="mono" value="${today()}"></label>
-      </div>
-      <label class="f"><span>Reason</span><select id="f-reason">${
-        REASONS.map(r => `<option>${r}</option>`).join('')}</select></label>
-      <label class="f"><span>Note</span><input type="text" id="f-note"></label>
-      <p class="hint">Recorded as a loss against this lot's price. Nothing is deleted.</p>`
-  };
-  const labels = {ship:'Ship it', transfer:'Reallocate', move:'Move it',
-    return:'Return it', produce:'Start production', confirm:'Confirm ready',
-    salvage:'Write it off', edit:'Save corrections'};
-  $('#dform').innerHTML = `<div class="card" style="margin-top:14px;border-color:var(--basalt)">
-    ${forms[kind]}<div class="err" id="f-err"></div>
-    <div class="row" style="margin-top:6px">
-      <button class="btn ${kind==='salvage'?'danger':'go'}" id="f-go" ${
-        kind==='return'&&!l.shipped?'disabled':''}>${labels[kind]}</button>
-      <button class="btn ghost" id="f-cancel">Cancel</button></div></div>`;
-  wireJobSelects('#dform');
-  $('#dform').scrollIntoView({behavior:'smooth', block:'nearest'});
-  $('#f-cancel').onclick = () => $('#dform').innerHTML = '';
-  $('#f-go').onclick = () => commit(kind);
-}
-
-function commit(kind){
-  const l = drawerLot;
-  const val = id => { const el = $(id); return el ? el.value.trim() : ''; };
-  const qty = Number(val('#f-qty'));
-  const date = val('#f-date') || today();
-  const note = val('#f-note');
-  const fail = m => { const e = $('#f-err'); e.textContent = m; e.classList.add('on'); };
-  if(['ship','transfer','return','salvage','produce'].includes(kind)){
-    if(!(qty > 0)) return fail('Enter a quantity of at least 1.');
-    if(kind !== 'return' && qty > l.qty)
-      return fail(`Only ${n0(l.qty)} on hand.`);
-    if(kind === 'return' && qty > l.shipped)
-      return fail(`Only ${n0(l.shipped)} ever shipped from this lot.`);
-  }
-  if(kind === 'ship'){
-    if(l.prod) return fail('This lot is still in production. Confirm it job ready first.');
-    if(!l.job || l.job === HOLD)
-      return fail('This lot is unallocated. Reallocate it to a job first.');
-    ship(l, qty, date, note);
-    toast(`${n0(qty)} shipped to ${l.job}`);
-  }
-  if(kind === 'transfer'){
-    const job = val('#f-job');
-    if(!job || job === '__new') return fail('Choose where it is going.');
-    if(job === (l.job || HOLD)) return fail(`It is already on ${job}.`);
-    const t = transfer(l, qty, job, val('#f-loc'), date, note);
-    toast(`${n0(qty)} reallocated to ${job}`); drawerLot = t;
-    $('#dtitle').textContent = t.code;
-  }
-  if(kind === 'move'){
-    const loc = val('#f-loc'); if(!loc) return fail('Name the bed it is moving to.');
-    moveLot(l, loc, date, note); toast(`${l.code} moved to ${loc}`);
-  }
-  if(kind === 'return'){ returnStock(l, qty, val('#f-loc'), date, note);
-    toast(`${n0(qty)} returned to the yard`); }
-  if(kind === 'produce'){
-    const size = val('#f-size');
-    if(!size) return fail('Name the size it is stepping up to.');
-    if(size.toLowerCase() === (l.size||'').toLowerCase())
-      return fail('That is the size it already is.');
-    const rawPrice = val('#f-price');
-    const price = rawPrice === '' ? undefined : Number(rawPrice);
-    if(price !== undefined && !(price >= 0)) return fail('Cost each must be a number, or left blank.');
-    const c = produce(l, qty, size, date, note, price);
-    toast(`${n0(qty)} into production as ${size}`);
-    drawerLot = c; $('#dtitle').textContent = c.code;
-  }
-  if(kind === 'edit'){
-    const bot = val('#f-bot');
-    if(!bot) return fail('A botanical name is required.');
-    const price = val('#f-price') === '' ? 0 : Number(val('#f-price'));
-    if(!(price >= 0)) return fail('Price each must be a number, or blank.');
-    const rawQty = val('#f-qty');
-    if(rawQty === '' || isNaN(Number(rawQty)))
-      return fail('On hand must be a number.');
-    const newQty = Math.floor(Number(rawQty));
-    if(newQty < 0 && l.qty >= 0 &&
-       !confirm(`Set ${l.code} to ${n0(newQty)}? A negative count usually means something `
-         + `was shipped or written off without being recorded.`)) return;
-    const was = l.qty;
-    editLot(l, {bot, cult: val('#f-cult'), com: val('#f-com'),
-      size: val('#f-size'), loc: val('#f-loc'), grower: val('#f-grow'),
-      price, received: val('#f-date'), note, qty: newQty});
-    toast(newQty !== was
-      ? `${l.code} recounted at ${n0(newQty)}`
-      : `${l.code} corrected`);
-  }
-  if(kind === 'confirm'){
-    const price = Number(val('#f-price'));
-    if(!(price >= 0) || val('#f-price') === '')
-      return fail('Enter the finished cost for each plant.');
-    confirmProduction(l, price, date, note);
-    toast(`${l.code} is job ready at ${money(price)} each`);
-  }
-  if(kind === 'salvage'){
-    salvage(l, qty, val('#f-reason'), date, note);
-    toast(`${n0(qty)} written off — ${money(qty*(l.price||0))} loss`);
-  }
-  drawLot(); renderAll();
-}
-
-/* =====================================================================
-   SHIP (scan lane)
-   ===================================================================== */
-let shipLot = null;
-function renderShip(){
-  const p = $('#s-panel');
-  if(!shipLot){
-    p.innerHTML = emptyState('Waiting for a tag',
-      'Scan a barcode or type a lot code and press enter.');
-  } else {
-    const l = shipLot;
-    p.innerHTML = `${tagHTML(l)}
-      <div class="card" style="margin-top:14px;border-color:var(--basalt)">
-        ${l.prod
-          ? `<p style="margin:0 0 12px"><b>Still in production.</b> Potted up from
-               ${esc(l.prodFrom||'')} on ${dshow(l.prodStart)}. Confirm it job ready before it ships.</p>
-             <button class="btn" id="s-open">Open lot</button>`
-          : l.qty <= 0
-          ? `<p style="margin:0 0 12px"><b>This lot is cleared out.</b> Open it in the yard to record a return.</p>
-             <button class="btn ghost" id="s-open">Open lot</button>`
-          : (!l.job || l.job === HOLD)
-          ? `<p style="margin:0 0 12px"><b>Unallocated.</b> Assign it to a job before it leaves the yard.</p>
-             <button class="btn" id="s-open">Reallocate</button>`
-          : `<div class="grid g2">
-              <label class="f"><span>Quantity out</span>
-                <input type="number" id="s-qty" class="mono" min="1" max="${l.qty}" value="${l.qty}"></label>
-              <label class="f"><span>Date of transfer</span>
-                <input type="date" id="s-date" class="mono" value="${today()}"></label></div>
-             <label class="f"><span>Note</span><input type="text" id="s-note" placeholder="Truck, crew, ticket…"></label>
-             <div class="err" id="s-err"></div>
-             <div class="row"><button class="btn go" id="s-go">Ship ${n0(l.qty)} to ${esc(l.job)}</button>
-             <button class="btn ghost" id="s-open">Open lot</button></div>`}
-      </div>`;
-    if($('#s-open')) $('#s-open').onclick = () => openLot(l.id);
-    if($('#s-qty')) $('#s-qty').oninput = () => {
-      const q = Number($('#s-qty').value) || 0;
-      $('#s-go').textContent = `Ship ${n0(q)} to ${l.job}`;
-    };
-    if($('#s-go')) $('#s-go').onclick = () => {
-      const q = Number($('#s-qty').value);
-      if(!(q > 0) || q > l.qty){
-        const e = $('#s-err'); e.textContent = `Enter between 1 and ${n0(l.qty)}.`;
-        e.classList.add('on'); return;
-      }
-      ship(l, q, $('#s-date').value || today(), $('#s-note').value.trim());
-      toast(`${n0(q)} shipped to ${l.job}`);
-      shipLot = null; $('#s-code').value = ''; renderAll(); $('#s-code').focus();
-    };
-  }
-  const rec = DB.events.filter(e => e.type === 'SHIP' && e.date >= daysAgo(14));
-  $('#s-recent').innerHTML = rec.length ? `<div class="tw"><table><thead><tr>
-    <th>Date</th><th>Lot</th><th>Plant</th><th class="r">Qty</th><th>Job</th><th>Note</th>
-  </tr></thead><tbody>${rec.map(e => `<tr data-id="${e.lotId}">
-    <td class="num">${dshow(e.date)}</td><td class="num">${esc(e.lot)}</td>
-    <td>${nameHTML(e)}</td><td class="r num">${n0(e.qty)}</td>
-    <td><span class="chip job">${esc(e.job||'—')}</span></td>
-    <td style="font-size:12px;color:var(--grey)">${esc(e.note||'')}</td>
-  </tr>`).join('')}</tbody></table></div>`
-    : emptyState('No shipments in the last two weeks', 'Scanned pulls will show up here.');
-  $$('#s-recent tr[data-id]').forEach(tr => tr.onclick = () => openLot(tr.dataset.id));
-}
-
-/* =====================================================================
-   HISTORY
-   ===================================================================== */
-function renderHistory(){
-  const sel = $('#h-type');
-  if(!sel.options.length)
-    sel.innerHTML = `<option value="">Everything</option>` +
-      TYPES.map(t => `<option>${t}</option>`).join('');
-  const bySel = $('#h-by');
-  const people = uniqSorted(DB.events.map(e => e.done_by));
-  const keepBy = bySel.value;
-  bySel.innerHTML = `<option value="">Anyone</option>` +
-    people.map(p => `<option value="${esc(p)}"${p===keepBy?' selected':''}>${esc(shortName(p))}</option>`).join('');
-  const q = $('#h-q').value.trim().toLowerCase();
-  const t = sel.value, from = $('#h-from').value, to = $('#h-to').value, fb = bySel.value;
-  const rows = DB.events.filter(e => {
-    if(t && e.type !== t) return false;
-    if(fb && e.done_by !== fb) return false;
-    if(from && e.date < from) return false;
-    if(to && e.date > to) return false;
-    if(q){
-      const hay = [e.lot,e.bot,e.cult,e.com,e.size,e.job,e.loc,e.text,e.note,e.reason,e.done_by]
-        .join(' ').toLowerCase();
-      if(!hay.includes(q)) return false;
-    }
-    return true;
-  });
-  $('#histBody').innerHTML = rows.length ? `<div class="tw"><table><thead><tr>
-    <th>Date</th><th>Action</th><th>Lot</th><th>Plant</th><th class="r">Qty</th>
-    <th>Job</th><th>Bed</th><th>By</th><th>Detail</th>
-  </tr></thead><tbody>${rows.slice(0,400).map(e => `<tr data-id="${e.lotId}">
-    <td class="num" style="white-space:nowrap">${dshow(e.date)}</td>
-    <td><span class="chip ${e.type==='SALVAGE'?'dead':e.type==='SHIP'?'out':''}">${e.type}</span></td>
-    <td class="num">${esc(e.lot)}</td>
-    <td>${nameHTML(e)} <span style="color:var(--grey);font-size:11.5px">${esc(e.size||'')}</span></td>
-    <td class="r num">${n0(e.qty)}</td>
-    <td>${e.job?`<span class="chip ${e.job===HOLD?'hold':'job'}">${esc(e.job)}</span>`:''}</td>
-    <td class="num" style="font-size:12px">${esc(e.loc||'')}</td>
-    <td style="font-size:11.5px">${esc(e.done_by?shortName(e.done_by):'')}</td>
-    <td style="font-size:12.5px">${esc(e.text)}${e.note?`<br><span style="color:var(--grey);font-size:11.5px">${esc(e.note)}</span>`:''}</td>
-  </tr>`).join('')}</tbody></table></div>
-  <p class="hint" style="margin-top:8px">${rows.length} records${rows.length>400?' — showing the newest 400. Export for the full set.':''}</p>`
-    : emptyState('Nothing matches', 'Widen the date range or clear the search.');
-  $$('#histBody tr[data-id]').forEach(tr => tr.onclick = () => openLot(tr.dataset.id));
-}
-
-/* =====================================================================
-   SALVAGE ACCOUNT
-   ===================================================================== */
-function renderSalvage(){
-  const ev = DB.events.filter(e => e.type === 'SALVAGE');
-  if(!ev.length){
-    $('#salvBody').innerHTML = emptyState('No losses recorded',
-      'Write off dead stock from any lot and it lands here.');
-    return;
-  }
-  const tot = ev.reduce((a,e) => ({qty:a.qty+e.qty, val:a.val+(e.value||0)}), {qty:0,val:0});
-  const byReason = {};
-  ev.forEach(e => {
-    const r = e.reason || 'Other';
-    byReason[r] = byReason[r] || {qty:0, val:0};
-    byReason[r].qty += e.qty; byReason[r].val += e.value || 0;
-  });
-  const rr = Object.entries(byReason).sort((a,b) => b[1].val - a[1].val);
-  const maxv = Math.max(...rr.map(r => r[1].val), 1);
-  $('#salvBody').innerHTML = `
-    <div class="grid g2" style="gap:0 26px;align-items:start">
-      <div>
-        <h2>Why stock was lost</h2>
-        <div class="tw"><table><thead><tr><th>Reason</th><th class="r">Plants</th><th class="r">Cost</th></tr></thead>
-        <tbody>${rr.map(([r,v]) => `<tr style="cursor:default"><td>${esc(r)}
-          <div class="bar"><i style="width:${(v.val/maxv*100).toFixed(1)}%;background:var(--rust)"></i></div></td>
-          <td class="r num">${n0(v.qty)}</td><td class="r num">${money(v.val)}</td></tr>`).join('')}
-        </tbody><tfoot><tr style="background:var(--paper)">
-          <td class="lab" style="padding:9px 12px">All losses</td>
-          <td class="r num"><b>${n0(tot.qty)}</b></td>
-          <td class="r num" style="color:var(--rust)"><b>${money(tot.val)}</b></td>
-        </tr></tfoot></table></div>
-      </div>
-      <div>
-        <h2>Every write-off</h2>
-        <div class="tw" style="max-height:520px;overflow:auto"><table><thead><tr>
-          <th>Date</th><th>Plant</th><th class="r">Qty</th><th>Reason</th><th class="r">Cost</th>
-        </tr></thead><tbody>${ev.map(e => `<tr data-id="${e.lotId}">
-          <td class="num" style="white-space:nowrap">${dshow(e.date)}</td>
-          <td>${nameHTML(e)}<br>
-            <span class="num" style="font-size:11px;color:var(--grey)">${esc(e.lot)} · ${esc(e.size||'')}</span></td>
-          <td class="r num">${n0(e.qty)}</td>
-          <td style="font-size:12.5px">${esc(e.reason||'—')}${e.done_by?` <span style="color:var(--grey)">· ${esc(shortName(e.done_by))}</span>`:''}${e.note?`<br><span style="color:var(--grey);font-size:11px">${esc(e.note)}</span>`:''}</td>
-          <td class="r num">${money(e.value||0)}</td></tr>`).join('')}
-        </tbody></table></div>
-      </div>
-    </div>`;
-  $$('#salvBody tr[data-id]').forEach(tr => tr.onclick = () => openLot(tr.dataset.id));
+    ${heldQty ? `<h2 style="margin-top:4px">Still standing in the yard — ${n0(heldQty)} plants</h2>
+      <table><thead><tr><th>Plant</th><th>Size</th><th class="r">Qty</th>
+        <th>Block</th><th>Lot</th></tr></thead>
+      <tbody>${held.slice().sort(byName).map(l => `<tr style="cursor:default">
+        <td>${nameHTML(l)}</td><td class="num">${esc(l.size||'')}</td>
+        <td class="r num"><b>${n0(l.qty)}</b></td><td class="num">${esc(l.loc||'—')}</td>
+        <td class="num" style="font-size:11px"><a href="#" data-lot="${esc(l.code)}">${esc(l.code)}</a></td>
+      </tr>`).join('')}</tbody></table>`
+      : `<p class="hint" style="margin:0">Nothing left in the yard for this job.</p>`}
+    ${evTable('Shipped to site', m.shipped, false)}
+    ${evTable('Taken off this job', m.offTo, true, 'Moved to')}
+    ${evTable('Brought onto this job', m.onFrom, true, 'Came from')}
+    ${evTable('Returned from site', m.returned, false)}
+    ${evTable('Salvaged', m.salvaged, false)}
+    ${evTable('Received directly', m.received, false)}`;
 }
 
 /* =====================================================================
@@ -3985,12 +3612,31 @@ function wire(){
   // archive
   ['#a-q','#a-job'].forEach(s => $(s).addEventListener('input', renderArchive));
   $('#a-csv').onclick = () => {
-    const rows = [['Project','Botanical','Cultivar','Size','Quantity','Block','Grower',
-      'Date','Pickup date','Notes']];
-    DB.arch.forEach(a => rows.push([a.job,a.bot,a.cult,a.size,a.qty,a.loc,a.grower,
-      a.date,a.pickup,a.note]));
-    download(`rexius-completed-${today()}.csv`, csv(rows));
-    toast('Archive exported');
+    const which = $('#a-job').value || 'closed';
+    const names = which === 'closed' ? closedJobs() : allJobs().concat([HOLD]);
+    if(!names.length) return toast('No closed projects to export', 'bad');
+    const rows = [['Project','Closed','Section','Date','Botanical','Cultivar','Common name',
+      'Size','Qty','Block','Moved to / from','Lot','By','Note']];
+    names.forEach(name => {
+      const r = jobRec(name) || {};
+      projectLots(name).slice().sort(byName).forEach(l =>
+        rows.push([name, r.closed||'', 'Still held', l.received||'', l.bot, l.cult||'',
+          l.com||'', l.size, l.qty, l.loc||'', '', l.code, '', l.note||'']));
+      const m = jobMovements(name);
+      const put = (label, list, dest) => list.slice()
+        .sort((a,b) => String(a.date).localeCompare(String(b.date)))
+        .forEach(e => rows.push([name, r.closed||'', label, e.date||'', e.bot||'', e.cult||'',
+          e.com||'', e.size||'', e.qty, e.loc||'', dest?(e.job||HOLD):'', e.lot||'',
+          e.done_by||'', e.note||e.reason||'']));
+      put('Received', m.received, false);
+      put('Brought onto the job', m.onFrom, true);
+      put('Shipped', m.shipped, false);
+      put('Returned', m.returned, false);
+      put('Taken off the job', m.offTo, true);
+      put('Salvaged', m.salvaged, false);
+    });
+    download(`rexius-closed-projects-${today()}.csv`, csv(rows));
+    toast(`${n0(rows.length-1)} lines exported`);
   };
 
   // plants
