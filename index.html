@@ -265,8 +265,7 @@ a.jobfilter:hover{text-decoration:underline}
   transition:transform .12s}
 tr.open .twist{transform:rotate(90deg);color:var(--rex-dk)}
 .chip.prod{background:#F6EEDF;border-color:#DEC79B;color:var(--bark)}
-.chip.done{background:#EDEEEA;border-color:var(--line);color:var(--grey);
-  text-decoration:line-through}
+.chip.done{background:#EDEEEA;border-color:var(--line);color:var(--slate)}
 .chip.dead{background:#F6E7E3;border-color:#DDB4AA;color:var(--rust)}
 .bar{height:4px;background:var(--hair);border-radius:2px;overflow:hidden;margin-top:5px}
 .bar i{display:block;height:100%;background:var(--rex-dk)}
@@ -723,7 +722,7 @@ const SIGNIN_SUFFIX = '@rexius.com';
 
 /* Shown in the bottom corner and on the Data tab. If the version on screen is
    not the one you just uploaded, the browser is serving an older copy. */
-const BUILD = '2026-08-26-am';
+const BUILD = '2026-08-26-ao';
 /* =====================================================================
    ↑↑↑  nothing below here needs editing  ↑↑↑
    ===================================================================== */
@@ -1575,7 +1574,7 @@ function locRollup(){
    ===================================================================== */
 const VIEWS = [
   ['board','Board'], ['jobs','Jobs'], ['receive','Receive'], ['yard','Yard'], ['ship','Ship'],
-  ['history','History'], ['archive','Archive'], ['salvage','Salvage'],
+  ['history','History'], ['archive','Completed'], ['salvage','Salvage'],
   ['tags','Tags'], ['data','Data']
 ];
 let current = 'board';
@@ -2665,16 +2664,18 @@ function renderArchive(){
       <td class="num" style="font-size:11.5px">${r.closed?dshow(r.closed):'—'}</td>
       <td class="r num">${n0(t('received') + t('onFrom'))}</td>
       <td class="r num"><b>${n0(t('shipped'))}</b></td>
-      <td class="r num">${t('offTo')?n0(t('offTo')):'—'}</td>
+      <td class="r num">${t('toHold')?`<b style="color:var(--bark)">${n0(t('toHold'))}</b>`:'—'}</td>
+      <td class="r num">${t('toOther')?n0(t('toOther')):'—'}</td>
       <td class="r num">${t('salvaged')?n0(t('salvaged')):'—'}</td>
       <td class="r num">${held?`<b>${n0(held)}</b>`:'—'}</td>
     </tr>
-    ${open?`<tr class="exp"><td colspan="8"><div class="inner">${jobBreakdown(name)}</div></td></tr>`:''}`;
+    ${open?`<tr class="exp"><td colspan="9"><div class="inner">${jobBreakdown(name)}</div></td></tr>`:''}`;
   }).join('');
 
   $('#archBody').innerHTML = `<div class="tw"><table><thead><tr>
     <th>Project</th><th>Opened</th><th>Closed</th>
-    <th class="r">In</th><th class="r">Shipped</th><th class="r">Taken off</th>
+    <th class="r">In</th><th class="r">Shipped</th>
+    <th class="r">Back to ${esc(HOLD)}</th><th class="r">To other jobs</th>
     <th class="r">Salvaged</th><th class="r">Still held</th>
   </tr></thead><tbody>${rows}</tbody></table></div>
   ${DB.arch.length?`<h2 style="margin-top:28px">Carried over from the spreadsheet</h2>
@@ -2756,7 +2757,9 @@ function jobBreakdown(name){
       <div><span class="k">Moved on</span><span class="v">${n0(t('onFrom'))}</span></div>
       <div><span class="k">Shipped out</span><span class="v">${n0(t('shipped'))}</span></div>
       <div><span class="k">Returned</span><span class="v">${n0(t('returned'))}</span></div>
-      <div><span class="k">Taken off</span><span class="v">${n0(t('offTo'))}</span></div>
+      <div><span class="k">Back to ${esc(HOLD.toLowerCase())}</span>
+        <span class="v" style="color:var(--bark)">${n0(t('toHold'))}</span></div>
+      <div><span class="k">To other jobs</span><span class="v">${n0(t('toOther'))}</span></div>
       <div><span class="k">Salvaged</span><span class="v" style="color:var(--rust)">${n0(t('salvaged'))}</span></div>
       <div><span class="k">Still held</span><span class="v">${n0(heldQty)}</span></div>
     </div>
@@ -2770,7 +2773,8 @@ function jobBreakdown(name){
       </tr>`).join('')}</tbody></table>`
       : `<p class="hint" style="margin:0">Nothing left in the yard for this job.</p>`}
     ${evTable('Shipped to site', m.shipped, false)}
-    ${evTable('Taken off this job', m.offTo, true, 'Moved to')}
+    ${evTable(`Given back to ${HOLD}`, m.toHold, true, 'Went to')}
+    ${evTable('Handed to another project', m.toOther, true, 'Moved to')}
     ${evTable('Brought onto this job', m.onFrom, true, 'Came from')}
     ${evTable('Returned from site', m.returned, false)}
     ${evTable('Salvaged', m.salvaged, false)}
@@ -3439,6 +3443,12 @@ function jobMovements(job){
     // taken off this project — the destination is on the event
     offTo:    DB.events.filter(e => e.type === 'TRANSFER' && (e.from || '') === job
                                     && (e.job || HOLD) !== job),
+    // back to the unallocated pile: the job gave it up, nobody else took it
+    toHold:   DB.events.filter(e => e.type === 'TRANSFER' && (e.from || '') === job
+                                    && (e.job || HOLD) === HOLD),
+    // handed straight to another job
+    toOther:  DB.events.filter(e => e.type === 'TRANSFER' && (e.from || '') === job
+                                    && (e.job || HOLD) !== job && (e.job || HOLD) !== HOLD),
     // moved onto this project from somewhere else
     onFrom:   DB.events.filter(e => e.type === 'TRANSFER' && mine(e)
                                     && (e.from || '') && e.from !== job),
@@ -3517,13 +3527,15 @@ function jobHistoryDoc(job, group){
         <span><i>on hand</i> <b>${n0(heldQty)}</b></span>
         <span><i>shipped out</i> <b>${n0(total('shipped'))}</b></span>
         <span><i>returned</i> ${n0(total('returned'))}</span>
-        <span><i>taken off the job</i> ${n0(total('offTo'))}</span>
+        <span><i>back to ${esc(HOLD.toLowerCase())}</i> <b>${n0(total('toHold'))}</b></span>
+        <span><i>to other jobs</i> ${n0(total('toOther'))}</span>
         <span><i>salvaged</i> ${n0(total('salvaged'))}</span>
       </div>
       <h3>On hand now<span>${n0(heldQty)} plants · ${n0(onHand.length)} lots</span></h3>
       ${stock}
       ${section('Shipped to site', m.shipped, false)}
-      ${section('Taken off this job', m.offTo, true, 'Moved to')}
+      ${section(`Given back to ${HOLD}`, m.toHold, true, 'Went to')}
+      ${section('Handed to another project', m.toOther, true, 'Moved to')}
       ${section('Brought onto this job', m.onFrom, true, 'Came from')}
       ${section('Returned from site', m.returned, false)}
       ${section('Salvaged', m.salvaged, false)}
@@ -3549,7 +3561,8 @@ function exportJobHistoryCSV(job){
         e.size||'',e.qty,e.loc||'', dest ? (e.job||HOLD) : '', e.lot||'', e.done_by||'',
         e.note||e.reason||'']));
     put('Shipped', m.shipped, false);
-    put('Taken off the job', m.offTo, true);
+    put(`Given back to ${HOLD}`, m.toHold, true);
+    put('Handed to another project', m.toOther, true);
     put('Brought onto the job', m.onFrom, true);
     put('Returned', m.returned, false);
     put('Salvaged', m.salvaged, false);
@@ -3665,7 +3678,8 @@ function renderExportPanel(){
     const m = jobMovements(job);
     const t = k => m[k].reduce((s,e) => s + e.qty, 0);
     $('#x-prev').innerHTML = `on hand <b>${n0(qty)}</b> · shipped <b>${n0(t('shipped'))}</b>`
-      + ` · taken off the job <b>${n0(t('offTo'))}</b> · salvaged ${n0(t('salvaged'))}`
+      + ` · back to ${esc(HOLD.toLowerCase())} <b>${n0(t('toHold'))}</b>`
+      + ` · to other jobs ${n0(t('toOther'))} · salvaged ${n0(t('salvaged'))}`
       + ` · returned ${n0(t('returned'))}`;
   } else {
     $('#x-prev').textContent = lots.length
@@ -4164,7 +4178,8 @@ function wire(){
       put('Brought onto the job', m.onFrom, true);
       put('Shipped', m.shipped, false);
       put('Returned', m.returned, false);
-      put('Taken off the job', m.offTo, true);
+      put(`Given back to ${HOLD}`, m.toHold, true);
+      put('Handed to another project', m.toOther, true);
       put('Salvaged', m.salvaged, false);
     });
     download(`rexius-closed-projects-${today()}.csv`, csv(rows));
