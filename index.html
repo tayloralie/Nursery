@@ -567,6 +567,23 @@ tr.open .twist{transform:rotate(90deg);color:var(--rex-dk)}
       <div id="s-recent"></div>
     </section>
 
+    <section class="view" id="v-production">
+      <h1>Production</h1>
+      <p class="sub">Everything part-way through a step-up: what went in, what it is costing,
+        and what it will be worth. Finish a line to release it onto a job.</p>
+      <div class="filters">
+        <label class="f grow"><span>Search</span>
+          <input type="search" id="x2-q" placeholder="Plant, lot, size, block…"></label>
+        <label class="f"><span>Show</span><select id="x2-show">
+          <option value="open">In production now</option>
+          <option value="done">Finished</option>
+          <option value="all">Everything</option>
+        </select></label>
+        <button class="btn ghost sm" id="x2-csv" style="margin-bottom:0">Export CSV</button>
+      </div>
+      <div id="prodBody"></div>
+    </section>
+
     <section class="view" id="v-history">
       <h1>History</h1>
       <p class="sub">Full chain of custody. Every movement is recorded and nothing is deleted.</p>
@@ -729,14 +746,14 @@ const SIGNIN_SUFFIX = '@rexius.com';
 
 /* Shown in the bottom corner and on the Data tab. If the version on screen is
    not the one you just uploaded, the browser is serving an older copy. */
-const BUILD = '2026-08-26-ar';
+const BUILD = '2026-08-26-as';
 /* =====================================================================
    ↑↑↑  nothing below here needs editing  ↑↑↑
    ===================================================================== */
 
 const KEY = 'rexius:yard:v1';
 const HOLD = 'Unassigned';                    // the no-job bucket, named as the yard names it
-const TYPES = ['RECEIVE','SHIP','RETURN','TRANSFER','MOVE','PRODUCE','CONFIRM','SALVAGE','EDIT','RENAME','JOB'];
+const TYPES = ['RECEIVE','SHIP','RETURN','TRANSFER','MOVE','PRODUCE','CREDIT','CONFIRM','SALVAGE','EDIT','RENAME','JOB'];
 const REASONS = ['Died','Damaged'];
 
 const BLANK = () => ({lots:[], events:[], plants:[], jobs:[], locs:[], growers:[],
@@ -856,6 +873,7 @@ function renameJob(from, to, date){
 /* ---------- helpers ---------- */
 const $  = s => document.querySelector(s);
 const $$ = s => Array.from(document.querySelectorAll(s));
+const esc0 = s => String(s ?? '');
 const esc = s => String(s??'').replace(/[&<>"']/g, c =>
   ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const uid = () => Math.random().toString(36).slice(2,10);
@@ -1077,44 +1095,88 @@ function salvage(lot, qty, reason, date, note){
 /* Production: stepping a plant up a pot size. The smaller stock leaves
    inventory and a new lot is born at the new size, tagged In-Production
    until someone confirms it is job ready and prices the labour in. */
-function produce(lot, qty, newSize, date, note, price){
+function produce(lot, qty, newSize, date, note, cost, value){
+  const fromJob = lot.job || HOLD;
+  const unit = lot.price || 0;            // what the stock stood at before
   lot.qty -= qty;
+
   const kids = DB.lots.filter(l => l.parent === lot.code).length;
   const child = Object.assign({}, lot, {
     id: uid(), code: `${lot.code}.${kids+1}`, parent: lot.code,
     size: newSize, qtyIn: qty, qty, shipped: 0, lost: 0,
-    price: (price === undefined || price === null || price === '') ? (lot.price || 0) : price,
     prod: true, prodFrom: lot.size, prodStart: date || today(),
+    prodCost: Number(cost) || 0,          // what the step-up costs each
+    prodValue: Number(value) || 0,        // what it is worth after
+    prodCredit: unit,                     // credited back to the job it left
+    prodJob: fromJob,
+    price: Number(value) || 0,
+    job: HOLD,                            // in production, on nobody's job
     ready: '', received: date || today(), note: '',
     created: new Date().toISOString()
   });
   DB.lots.unshift(child);
+
   const evP = logEvent(lot, 'PRODUCE', qty,
-    `${n0(qty)} pulled for production — ${lot.size} stepping up to ${newSize} as ${child.code}`
-      + (child.price ? ` at ${money(child.price)} each` : ''),
-    {date, job: lot.job, loc: lot.loc, note});
+    `${n0(qty)} pulled for production — ${lot.size} stepping up to ${newSize} as ${child.code}`,
+    {date, job: fromJob, loc: lot.loc, note});
+
+  /* The job that gave the stock up is credited what it paid for it, so its
+     account balances instead of the plants simply vanishing off the job. */
+  const evCr = logEvent(lot, 'CREDIT', qty,
+    `Credit to ${fromJob} — ${n0(qty)} × ${esc0(lot.size)} at ${money(unit)} each `
+      + `returned to the job when they went into production as ${child.code}`,
+    {date, job: fromJob, loc: lot.loc, value: qty * unit, note});
+
   const evC = logEvent(child, 'PRODUCE', qty,
-    `Potted up from ${lot.size} out of ${lot.code} — in production`,
-    {date, job: child.job, loc: child.loc, parent: lot.code, note,
-     value: qty * (child.price||0)});
+    `Potted up from ${lot.size} out of ${lot.code}`
+      + (cost ? ` at ${money(cost)} each to convert` : '')
+      + (value ? `, valued at ${money(value)} each` : ''),
+    {date, job: HOLD, loc: child.loc, parent: lot.code, from: fromJob, note,
+     value: qty * (Number(cost) || 0)});
+
   outbox({kind:'lot', lot:child},
     {kind:'move', lot_id:lot.id, d_qty:-qty, event:evP},
+    {kind:'move', lot_id:'', event:evCr},
     {kind:'move', lot_id:child.id, event:evC});
+
   rememberPlant(lot.bot, lot.com, newSize, lot.cult);
   save();
   return child;
 }
 
-function confirmProduction(lot, price, date, note){
+/* Coming out the other end: the real count, the real cost, what it is now
+   worth, and which job it is going onto. */
+function finishProduction(lot, qty, cost, value, toJob, loc, date, note){
+  const started = lot.qtyIn;
+  const d = qty - lot.qty;
+  const job = toJob || HOLD;
+
+  lot.qty = qty;
   lot.prod = false;
-  lot.price = price;
+  lot.prodCost = Number(cost) || 0;
+  lot.prodValue = Number(value) || 0;
+  lot.price = Number(value) || 0;
+  lot.job = job;
   lot.ready = 'Yes';
-  const ev = logEvent(lot, 'CONFIRM', lot.qty,
-    `Production finished — ${n0(lot.qty)} ${lot.size} job ready at ${money(price)} each`,
-    {date, job: lot.job, loc: lot.loc, note, value: lot.qty * price});
-  outbox({kind:'move', lot_id:lot.id, set:{prod:false, price:price, ready:'Yes'}, event:ev});
+  if(loc) lot.loc = loc;
+
+  const lost = started - qty;
+  const ev = logEvent(lot, 'CONFIRM', qty,
+    `Production finished — ${n0(qty)} × ${lot.size} job ready`
+      + (lost > 0 ? `, ${n0(lost)} lost on the way from ${n0(started)}` : '')
+      + (lost < 0 ? `, ${n0(-lost)} more than the ${n0(started)} started` : '')
+      + ` · ${money(lot.prodCost)} each to convert, now worth ${money(lot.price)} each`
+      + ` · allocated to ${job}`,
+    {date, job, loc: lot.loc, note, value: qty * lot.price});
+
+  outbox({kind:'move', lot_id:lot.id, d_qty:d, event:ev,
+    set:{prod:false, price:lot.price, ready:'Yes', job, loc:lot.loc,
+         prodCost:lot.prodCost, prodValue:lot.prodValue}});
+  ensureJob(job);
   save();
+  return lot;
 }
+
 
 /* Correcting what a plant is called, rather than moving any of it. Nothing
    about the quantities changes; the ledger records what was altered so a
@@ -1399,14 +1461,17 @@ const toRow = l => ({id:l.id, code:l.code, parent:l.parent||'', kind:l.kind||'P'
   loc:l.loc||'', credit:l.credit||'', ready:l.ready||'', grower:l.grower||'',
   price:l.price||0, received:l.received||'', qtyIn:l.qtyIn||0, qty:l.qty||0,
   shipped:l.shipped||0, lost:l.lost||0, prod:!!l.prod, prodFrom:l.prodFrom||'',
-  prodStart:l.prodStart||'', note:l.note||''});
+  prodStart:l.prodStart||'', prodCost:l.prodCost||0, prodValue:l.prodValue||0,
+  prodCredit:l.prodCredit||0, prodJob:l.prodJob||'', note:l.note||''});
 
 const fromRow = r => ({id:r.id, code:r.code, parent:r.parent||'', kind:r.kind||'P',
   bot:r.bot||'', cult:r.cult||'', com:r.com||'', size:r.size||'', job:r.job||HOLD,
   loc:r.loc||'', credit:r.credit||'', ready:r.ready||'', grower:r.grower||'',
   price:Number(r.price)||0, received:r.received||'', qtyIn:r.qty_in||0, qty:r.qty||0,
   shipped:r.shipped||0, lost:r.lost||0, prod:!!r.prod, prodFrom:r.prod_from||'',
-  prodStart:r.prod_start||'', note:r.note||'', created:r.created});
+  prodStart:r.prod_start||'', prodCost:Number(r.prod_cost)||0,
+  prodValue:Number(r.prod_value)||0, prodCredit:Number(r.prod_credit)||0,
+  prodJob:r.prod_job||'', note:r.note||'', created:r.created});
 
 const evFromRow = r => ({id:r.id, lotId:r.lot_id||'', lot:r.lot||'', type:r.type,
   qty:r.qty||0, bot:r.bot||'', cult:r.cult||'', com:r.com||'', size:r.size||'',
@@ -1581,14 +1646,15 @@ function locRollup(){
    ===================================================================== */
 const VIEWS = [
   ['board','Board'], ['jobs','Jobs'], ['receive','Receive'], ['yard','Yard'], ['ship','Ship'],
-  ['history','History'], ['archive','Completed'], ['salvage','Salvage'],
+  ['production','Production'], ['history','History'], ['archive','Completed'], ['salvage','Salvage'],
   ['tags','Tags'], ['data','Data']
 ];
 let current = 'board';
 
 function renderNav(){
   const counts = {yard: live().length, tags: DB.queue.length,
-    archive: DB.arch.length, jobs: openJobs().length};
+    archive: closedJobs().length, jobs: openJobs().length,
+    production: inProd().length};
   $('#nav').innerHTML = VIEWS.map(([k,label]) =>
     `<button data-v="${k}" aria-current="${k===current}">${label}` +
     (counts[k] ? `<span class="tally">${counts[k]}</span>` : '') + `</button>`).join('');
@@ -1655,7 +1721,7 @@ function renderAll(){
   // rest of the app down with it.
   const views = {board:'renderBoard', jobs:'renderJobs', yard:'renderYard',
     ship:'renderShip', history:'renderHistory', archive:'renderArchive',
-    salvage:'renderSalvage', tags:'renderTags'};
+    salvage:'renderSalvage', tags:'renderTags', production:'renderProduction'};
   const fn = views[current] && window[views[current]];
   if(typeof fn === 'function'){
     try{ fn(); }
@@ -1663,7 +1729,7 @@ function renderAll(){
       console.error(current + ' failed to draw:', e);
       const body = $('#' + {board:'boardBody', jobs:'jobsBody', yard:'yardBody',
         history:'histBody', archive:'archBody', salvage:'salvBody',
-        tags:'tagBody', ship:'s-panel'}[current]);
+        tags:'tagBody', ship:'s-panel', production:'prodBody'}[current]);
       if(body) body.innerHTML = `<div class="note-strip"><b>This screen could not be drawn</b><br>
         ${esc(String(e.message || e))}</div>`;
     }
@@ -2153,12 +2219,15 @@ function yardByLot(rows){
     String(a.code).localeCompare(String(b.code), undefined, {numeric:true}));
   const CAP = 300, m = priced();
   return `<div class="tw"><table><thead><tr>
-    <th>Lot</th><th>Plant</th><th>Size</th><th class="r">On hand</th>
+    <th>Lot</th><th>Plant</th><th>Cultivar</th><th>Common name</th>
+    <th>Size</th><th class="r">On hand</th>
     <th>Project</th><th>Block</th><th>Status</th><th>Received</th>
     ${m?'<th class="r">Value</th>':''}<th></th>
   </tr></thead><tbody>${rows.slice(0,CAP).map(l => `<tr data-id="${l.id}" class="${l.qty<0?'warn':''}">
     <td class="num" style="white-space:nowrap">${esc(l.code)}</td>
-    <td>${nameHTML(l)}</td>
+    <td><span class="bot">${esc(l.bot)}</span></td>
+    <td><span class="cult">${l.cult?'\u2018'+esc(l.cult)+'\u2019':''}</span></td>
+    <td><span class="com2">${esc(l.com||'')}</span></td>
     <td class="num">${esc(l.size)}</td>
     <td class="r num"><b${l.qty<0?' style="color:var(--rust)"':''}>${n0(l.qty)}</b>${
       l.qty > 0 && l.qty !== l.qtyIn
@@ -2198,19 +2267,16 @@ function yardByPlant(rows){
   const list = Array.from(m.entries()).sort((a,b) => byName(a[1], b[1])
     || (a[1].com||'').localeCompare(b[1].com||''));
   return `<div class="tw"><table><thead><tr>
-    <th>Plant</th><th>Common name</th><th>Sizes</th><th class="r">On hand</th>
+    <th>Plant</th><th>Cultivar</th><th>Common name</th><th>Sizes</th><th class="r">On hand</th>
     <th class="r">On projects</th><th class="r">${esc(HOLD)}</th><th>Projects</th><th>Blocks</th>
   </tr></thead><tbody>${list.map(([k,r]) => {
     const open = openRows.has('p:'+k);
     const jobs = Array.from(r.jobs).sort(), locs = Array.from(r.locs).sort();
     return `<tr data-open="p:${esc(k)}" class="${open?'open':''}">
-      <td><span class="twist">\u203A</span> ${nameMode()==='com' && r.com
-        ? `<span class="com2 lead">${esc(r.com)}</span>` + botHTML(r,'sub')
-        : `<span class="bot" style="font-size:15px">${esc(r.bot)}</span>`
-          + (r.cult?` <span class="cult">\u2018${esc(r.cult)}\u2019</span>`:'')}</td>
-      <td>${nameMode()==='com' && r.com
-        ? `<span class="bot" style="font-size:12px">${esc(r.bot)}</span>`
-        : `<span class="com2">${esc(r.com||'—')}</span>`}</td>
+      <td><span class="twist">\u203A</span>
+        <span class="bot" style="font-size:15px">${esc(r.bot)}</span></td>
+      <td><span class="cult" style="font-size:14px">${r.cult?'\u2018'+esc(r.cult)+'\u2019':'—'}</span></td>
+      <td><span class="com2">${esc(r.com||'—')}</span></td>
       <td class="num" style="font-size:11.5px">${Array.from(r.sizes).sort().join(', ')||'—'}</td>
       <td class="r num"><b>${n0(r.qty)}</b>${r.prod?`<br><span class="chip prod">${n0(r.prod)} in prod</span>`:''}</td>
       <td class="r num">${r.qty-r.unalloc?n0(r.qty-r.unalloc):'—'}</td>
@@ -2220,7 +2286,7 @@ function yardByPlant(rows){
       <td class="num" style="font-size:11.5px">${locs.slice(0,4).join(' ')||'—'}${
         locs.length>4?` +${locs.length-4}`:''}</td>
     </tr>
-    ${open?`<tr class="exp"><td colspan="8"><div class="inner">${splitTable(r)}</div></td></tr>`:''}`;
+    ${open?`<tr class="exp"><td colspan="9"><div class="inner">${splitTable(r)}</div></td></tr>`:''}`;
   }).join('')}</tbody></table></div>`;
 }
 
@@ -2291,10 +2357,14 @@ function groupTable(r, mode){
     String(a.loc||'').localeCompare(String(b.loc||''), undefined, {numeric:true}));
   if(!live.length) return `<p style="margin:0;font-size:13px;color:var(--grey)">Nothing on hand here.</p>`;
   return `<table><thead><tr>
-    <th>Plant</th><th>Size</th><th>${mode==='loc'?'Project':'Block'}</th>
+    <th>Plant</th><th>Cultivar</th><th>Common name</th><th>Size</th>
+    <th>${mode==='loc'?'Project':'Block'}</th>
     <th class="r">On hand</th><th>Lot</th><th></th></tr></thead>
     <tbody>${live.slice(0,120).map(l => `<tr data-id="${l.id}">
-      <td>${nameHTML(l)}</td><td class="num">${esc(l.size||'—')}</td>
+      <td><span class="bot">${esc(l.bot)}</span></td>
+      <td><span class="cult">${l.cult?'\u2018'+esc(l.cult)+'\u2019':''}</span></td>
+      <td><span class="com2">${esc(l.com||'')}</span></td>
+      <td class="num">${esc(l.size||'—')}</td>
       <td>${mode==='loc'
         ? `<a href="#" class="jobfilter" data-jobfilter="${esc(l.job||HOLD)}"><span class="chip ${
             (l.job||HOLD)===HOLD?'hold':'job'}">${esc(l.job||HOLD)}</span></a>`
@@ -2667,17 +2737,19 @@ function renderArchive(){
       <td class="r num"><b>${n0(t('shipped'))}</b></td>
       <td class="r num">${t('toHold')?`<b style="color:var(--bark)">${n0(t('toHold'))}</b>`:'—'}</td>
       <td class="r num">${t('toOther')?n0(t('toOther')):'—'}</td>
+      <td class="r num">${t('credits')?`${n0(t('credits'))}<br><span style="font-size:10px;color:var(--grey)">${
+        money(m.credits.reduce((s,e)=>s+(e.value||0),0))}</span>`:'—'}</td>
       <td class="r num">${t('salvaged')?n0(t('salvaged')):'—'}</td>
       <td class="r num">${held?`<b>${n0(held)}</b>`:'—'}</td>
     </tr>
-    ${open?`<tr class="exp"><td colspan="9"><div class="inner">${jobBreakdown(name)}</div></td></tr>`:''}`;
+    ${open?`<tr class="exp"><td colspan="10"><div class="inner">${jobBreakdown(name)}</div></td></tr>`:''}`;
   }).join('');
 
   $('#archBody').innerHTML = `<div class="tw"><table><thead><tr>
     <th>Project</th><th>Opened</th><th>Closed</th>
     <th class="r">In</th><th class="r">Shipped</th>
     <th class="r">Back to ${esc(HOLD)}</th><th class="r">To other jobs</th>
-    <th class="r">Salvaged</th><th class="r">Still held</th>
+    <th class="r">Into production</th><th class="r">Salvaged</th><th class="r">Still held</th>
   </tr></thead><tbody>${rows}</tbody></table></div>
   ${DB.arch.length?`<h2 style="margin-top:28px">Carried over from the spreadsheet</h2>
     <p class="hint" style="margin-bottom:10px">${n0(DB.arch.length)} finished rows imported with
@@ -2761,6 +2833,8 @@ function jobBreakdown(name){
       <div><span class="k">Back to ${esc(HOLD.toLowerCase())}</span>
         <span class="v" style="color:var(--bark)">${n0(t('toHold'))}</span></div>
       <div><span class="k">To other jobs</span><span class="v">${n0(t('toOther'))}</span></div>
+      <div><span class="k">Into production</span><span class="v">${n0(t('credits'))}
+        <small>${money(m.credits.reduce((s,e)=>s+(e.value||0),0))} credited</small></span></div>
       <div><span class="k">Salvaged</span><span class="v" style="color:var(--rust)">${n0(t('salvaged'))}</span></div>
       <div><span class="k">Still held</span><span class="v">${n0(heldQty)}</span></div>
     </div>
@@ -2778,6 +2852,7 @@ function jobBreakdown(name){
     ${evTable('Handed to another project', m.toOther, true, 'Moved to')}
     ${evTable('Brought onto this job', m.onFrom, true, 'Came from')}
     ${evTable('Returned from site', m.returned, false)}
+    ${evTable('Credited back from production', m.credits, false)}
     ${evTable('Salvaged', m.salvaged, false)}
     ${evTable('Received directly', m.received, false)}`;
 }
@@ -2847,6 +2922,88 @@ function renderShip(){
   </tr>`).join('')}</tbody></table></div>`
     : emptyState('No shipments in the last two weeks', 'Scanned pulls will show up here.');
   $$('#s-recent tr[data-id]').forEach(tr => tr.onclick = () => openLot(tr.dataset.id));
+}
+
+/* =====================================================================
+   PRODUCTION PIPELINE
+   A lot in production belongs to nobody: it has left the job that supplied
+   it (which was credited) and has not yet been given to the next one.
+   ===================================================================== */
+function prodRows(){
+  const q = $('#x2-q').value.trim().toLowerCase();
+  const show = $('#x2-show').value;
+  return DB.lots.filter(l => {
+    const started = l.prodFrom || l.prod;
+    if(!started) return false;
+    if(show === 'open' && !l.prod) return false;
+    if(show === 'done' && l.prod) return false;
+    if(q){
+      const hay = [l.code,l.parent,l.bot,l.cult,l.com,l.size,l.prodFrom,l.loc,l.prodJob,l.job]
+        .join(' ').toLowerCase();
+      if(!hay.includes(q)) return false;
+    }
+    return true;
+  }).sort((a,b) => (b.prod?1:0) - (a.prod?1:0)
+    || String(a.prodStart||'').localeCompare(String(b.prodStart||''))
+    || byName(a,b));
+}
+
+function renderProduction(){
+  const rows = prodRows();
+  if(!rows.length){
+    $('#prodBody').innerHTML = emptyState('Nothing in production',
+      'Open a lot in the yard and choose Production to step it up a pot size.');
+    return;
+  }
+  const open = rows.filter(l => l.prod);
+  const qty = open.reduce((s,l) => s + l.qty, 0);
+  const inCost = open.reduce((s,l) => s + l.qty * (l.prodCost||0), 0);
+  const credited = open.reduce((s,l) => s + l.qtyIn * (l.prodCredit||0), 0);
+  const worth = open.reduce((s,l) => s + l.qty * (l.prodValue||l.price||0), 0);
+
+  $('#prodBody').innerHTML = `
+    <div class="tally-strip">
+      <div><span class="k">In production</span><span class="v">${n0(qty)}<small>${n0(open.length)} lots</small></span></div>
+      <div><span class="k">Credited back</span><span class="v">${money(credited)}</span></div>
+      <div><span class="k">Conversion cost</span><span class="v" style="color:var(--bark)">${money(inCost)}</span></div>
+      <div><span class="k">Value when done</span><span class="v">${money(worth)}</span></div>
+      <div><span class="k">Added value</span><span class="v">${money(worth - credited - inCost)}</span></div>
+    </div>
+    <div class="tw"><table><thead><tr>
+      <th>Lot</th><th>Plant</th><th>Cultivar</th>
+      <th>From</th><th>To</th><th class="r">Qty</th>
+      <th>Block</th><th>Credited to</th>
+      <th class="r">Credit each</th><th class="r">Cost each</th><th class="r">Value each</th>
+      <th>Started</th><th>Status</th><th></th>
+    </tr></thead><tbody>${rows.map(l => `<tr data-id="${l.id}">
+      <td class="num" style="white-space:nowrap">${esc(l.code)}${l.parent?`<br><span style="font-size:10px;color:var(--grey)">from ${esc(l.parent)}</span>`:''}</td>
+      <td><span class="bot">${esc(l.bot)}</span></td>
+      <td><span class="cult">${l.cult?'\u2018'+esc(l.cult)+'\u2019':''}</span></td>
+      <td class="num">${esc(l.prodFrom||'—')}</td>
+      <td class="num"><b>${esc(l.size||'—')}</b></td>
+      <td class="r num"><b>${n0(l.qty)}</b>${l.qty!==l.qtyIn?`<br><span style="font-size:10px;color:var(--grey)">of ${n0(l.qtyIn)}</span>`:''}</td>
+      <td class="num">${esc(l.loc||'—')}</td>
+      <td>${l.prodJob?`<span class="chip ${l.prodJob===HOLD?'hold':'job'}">${esc(l.prodJob)}</span>`:'—'}</td>
+      <td class="r num">${money(l.prodCredit||0)}</td>
+      <td class="r num">${money(l.prodCost||0)}</td>
+      <td class="r num">${money(l.prodValue||l.price||0)}</td>
+      <td class="num" style="font-size:11.5px">${dshow(l.prodStart)}</td>
+      <td>${l.prod?`<span class="chip prod">In production</span>`
+        :`<span class="chip">Finished \u2192 ${esc(l.job||HOLD)}</span>`}</td>
+      <td class="r">${l.prod?`<button class="btn go sm" data-finish="${l.id}">Finish</button>`
+        :`<button class="btn ghost sm" data-open="${l.id}">Open</button>`}</td>
+    </tr>`).join('')}</tbody></table></div>`;
+
+  $$('#prodBody tr[data-id]').forEach(tr => tr.onclick = e => {
+    if(e.target.closest('button')) return;
+    openLot(tr.dataset.id);
+  });
+  $$('#prodBody [data-finish]').forEach(b => b.onclick = e => {
+    e.stopPropagation(); openLotAt(b.dataset.finish, 'confirm');
+  });
+  $$('#prodBody [data-open]').forEach(b => b.onclick = e => {
+    e.stopPropagation(); openLot(b.dataset.open);
+  });
 }
 
 /* =====================================================================
@@ -3139,25 +3296,40 @@ function lotAction(kind){
           <input type="text" id="f-size" list="dl-size" placeholder="e.g. 2g" autocomplete="off"></label>
       </div>
       <div class="grid g2">
-        <label class="f"><span>Cost each once potted up</span>
-          <input type="number" id="f-price" class="mono" min="0" step="0.01"
-            value="${l.price ? l.price : ''}" placeholder="0.00">
-          <div class="hint">Pot, media and labour included. Can be changed when you confirm it.</div></label>
-        <label class="f"><span>Date started</span><input type="date" id="f-date" class="mono" value="${today()}"></label>
+        <label class="f"><span>Cost each to convert</span>
+          <input type="number" id="f-cost" class="mono" min="0" step="0.01" placeholder="0.00">
+          <div class="hint">Pot, media and labour — what the step-up costs.</div></label>
+        <label class="f"><span>Value each afterwards</span>
+          <input type="number" id="f-price" class="mono" min="0" step="0.01" placeholder="0.00">
+          <div class="hint">What the bigger plant is worth.</div></label>
       </div>
+      <label class="f"><span>Date started</span><input type="date" id="f-date" class="mono" value="${today()}"></label>
       <label class="f"><span>Note</span><input type="text" id="f-note" placeholder="Who potted it, what mix"></label>
-      <p class="hint">Leaves ${esc(l.size)} inventory and opens a new lot at the bigger size, tagged
-        In-Production until you confirm it is job ready.</p>`,
+      <p class="hint">${esc(l.job || HOLD)} is credited ${money(l.price)} each for the
+        ${n0(l.qty)} it gives up. The new lot sits in the production pipeline until it is finished.</p>`,
 
-    confirm: () => `<h2>Confirm job ready</h2>
-      <p style="margin:0 0 14px;font-size:13.5px">${n0(l.qty)} × ${esc(l.size)} potted up from
-        ${esc(l.prodFrom||'')} on ${dshow(l.prodStart)}. Enter what each one now costs with the
-        potting, media and labour included.</p>
+    confirm: () => `<h2>Finish production</h2>
+      <p style="margin:0 0 14px;font-size:13.5px">${n0(l.qtyIn)} × ${esc(l.prodFrom||'')} went in on
+        ${dshow(l.prodStart)} to become ${esc(l.size)}.</p>
       <div class="grid g2">
-        <label class="f"><span>Finished cost each</span>
+        <label class="f"><span>Quantity produced</span>
+          <input type="number" id="f-qty" class="mono" min="0" step="1" value="${l.qty}">
+          <div class="hint">${n0(l.qtyIn)} started. Enter fewer if some were lost potting up.</div></label>
+        <label class="f"><span>Date finished</span>
+          <input type="date" id="f-date" class="mono" value="${today()}"></label>
+      </div>
+      <div class="grid g2">
+        <label class="f"><span>Cost each to produce</span>
+          <input type="number" id="f-cost" class="mono" min="0" step="0.01"
+            value="${l.prodCost||''}" placeholder="0.00"></label>
+        <label class="f"><span>Value each now</span>
           <input type="number" id="f-price" class="mono" min="0" step="0.01"
-            value="${l.price||''}" placeholder="0.00"></label>
-        <label class="f"><span>Date ready</span><input type="date" id="f-date" class="mono" value="${today()}"></label>
+            value="${l.prodValue||l.price||''}" placeholder="0.00"></label>
+      </div>
+      <div class="grid g2">
+        <label class="f"><span>Allocate to</span>${jobSelectHTML('f-job', HOLD)}</label>
+        <label class="f"><span>Block</span>
+          <input type="text" id="f-loc" list="dl-loc" value="${esc(l.loc||'')}"></label>
       </div>
       <label class="f"><span>Note</span><input type="text" id="f-note" placeholder="Grade, condition, anything worth recording"></label>`,
 
@@ -3208,7 +3380,7 @@ function lotAction(kind){
   };
 
   const labels = {ship:'Ship it', transfer:'Reallocate', move:'Move it',
-    return:'Return it', produce:'Start production', confirm:'Confirm ready',
+    return:'Return it', produce:'Start production', confirm:'Finish production',
     salvage:'Write it off', edit:'Save corrections'};
 
   if(!forms[kind]) return;
@@ -3272,20 +3444,26 @@ function commit(kind){
     if(!size) return fail('Name the size it is stepping up to.');
     if(size.toLowerCase() === (l.size||'').toLowerCase())
       return fail('That is the size it already is.');
-    const raw = val('#f-price');
-    const price = raw === '' ? undefined : Number(raw);
-    if(price !== undefined && !(price >= 0)) return fail('Cost each must be a number, or left blank.');
-    const c = produce(l, qty, size, date, note, price);
-    toast(`${n0(qty)} into production as ${size}`);
+    const cost = val('#f-cost') === '' ? 0 : Number(val('#f-cost'));
+    const value = val('#f-price') === '' ? 0 : Number(val('#f-price'));
+    if(!(cost >= 0)) return fail('Cost each must be a number, or left blank.');
+    if(!(value >= 0)) return fail('Value each must be a number, or left blank.');
+    const c = produce(l, qty, size, date, note, cost, value);
+    toast(`${n0(qty)} into production as ${size} — ${money(qty*(l.price||0))} credited to ${c.prodJob}`);
     drawerLot = c; $('#dtitle').textContent = c.code;
   }
 
   if(kind === 'confirm'){
-    const price = Number(val('#f-price'));
-    if(val('#f-price') === '' || !(price >= 0))
-      return fail('Enter the finished cost for each plant.');
-    confirmProduction(l, price, date, note);
-    toast(`${l.code} is job ready at ${money(price)} each`);
+    const made = Math.floor(Number(val('#f-qty')));
+    if(val('#f-qty') === '' || !(made >= 0)) return fail('Enter how many came out.');
+    const cost = val('#f-cost') === '' ? 0 : Number(val('#f-cost'));
+    const value = val('#f-price') === '' ? 0 : Number(val('#f-price'));
+    if(!(cost >= 0)) return fail('Cost each must be a number.');
+    if(!(value >= 0)) return fail('Value each must be a number.');
+    const job = val('#f-job');
+    if(job === '__new') return fail('Choose where it is going.');
+    finishProduction(l, made, cost, value, job || HOLD, val('#f-loc'), date, note);
+    toast(`${n0(made)} finished at ${money(value)} each — allocated to ${job || HOLD}`);
   }
 
   if(kind === 'salvage'){
@@ -3453,6 +3631,8 @@ function jobMovements(job){
     // moved onto this project from somewhere else
     onFrom:   DB.events.filter(e => e.type === 'TRANSFER' && mine(e)
                                     && (e.from || '') && e.from !== job),
+    // stock this job gave up to the potting bench, and what it was credited
+    credits:  DB.events.filter(e => e.type === 'CREDIT' && mine(e)),
   };
 }
 
@@ -3530,6 +3710,8 @@ function jobHistoryDoc(job, group){
         <span><i>returned</i> ${n0(total('returned'))}</span>
         <span><i>back to ${esc(HOLD.toLowerCase())}</i> <b>${n0(total('toHold'))}</b></span>
         <span><i>to other jobs</i> ${n0(total('toOther'))}</span>
+        <span><i>into production</i> ${n0(total('credits'))}
+          (${money(m.credits.reduce((s,e)=>s+(e.value||0),0))} credited)</span>
         <span><i>salvaged</i> ${n0(total('salvaged'))}</span>
       </div>
       <h3>On hand now<span>${n0(heldQty)} plants · ${n0(onHand.length)} lots</span></h3>
@@ -3539,6 +3721,7 @@ function jobHistoryDoc(job, group){
       ${section('Handed to another project', m.toOther, true, 'Moved to')}
       ${section('Brought onto this job', m.onFrom, true, 'Came from')}
       ${section('Returned from site', m.returned, false)}
+      ${section('Credited back from production', m.credits, false)}
       ${section('Salvaged', m.salvaged, false)}
     </div>`;
   }).filter(Boolean).join('');
@@ -3566,6 +3749,7 @@ function exportJobHistoryCSV(job){
     put('Handed to another project', m.toOther, true);
     put('Brought onto the job', m.onFrom, true);
     put('Returned', m.returned, false);
+    put('Credited back from production', m.credits, false);
     put('Salvaged', m.salvaged, false);
   });
   if(rows.length === 1) return toast('Nothing recorded for that project', 'bad');
@@ -4119,11 +4303,13 @@ function wire(){
   $('#y-csv').onclick = () => {
     const rows = [['Lot','Botanical','Cultivar','Common','Size','Received','On hand','Shipped',
       'Salvaged','Job','Job credit','Job ready','Block','Grower','Price each','Value',
-      'Date received','Split from','In production','Potted up from','Note']];
+      'Date received','Split from','In production','Potted up from',
+      'Conversion cost each','Value each','Credit each','Credited to','Note']];
     DB.lots.forEach(l => rows.push([l.code,l.bot,l.cult,l.com,l.size,l.qtyIn,l.qty,l.shipped,
       l.lost,l.job||HOLD,l.credit,l.ready,l.loc,l.grower,l.price,
       (l.qty*(l.price||0)).toFixed(2),l.received,l.parent,
-      l.prod?'Yes':'',l.prodFrom||'',l.note]));
+      l.prod?'Yes':'',l.prodFrom||'',(l.prodCost||0).toFixed(2),
+      (l.prodValue||0).toFixed(2),(l.prodCredit||0).toFixed(2),l.prodJob||'',l.note]));
     download(`rexius-yard-${today()}.csv`, csv(rows));
     toast('Yard exported');
   };
@@ -4140,6 +4326,21 @@ function wire(){
   });
 
   // history
+  ['#x2-q','#x2-show'].forEach(s => $(s).addEventListener('input', renderProduction));
+  $('#x2-csv').onclick = () => {
+    const rows = [['Lot','From lot','Botanical','Cultivar','Common name','From size','To size',
+      'Started','Quantity in','Quantity now','Credited to','Credit each','Credit total',
+      'Cost each','Cost total','Value each','Value total','Block','Status','Allocated to']];
+    prodRows().forEach(l => rows.push([l.code, l.parent||'', l.bot, l.cult||'', l.com||'',
+      l.prodFrom||'', l.size, l.prodStart||'', l.qtyIn, l.qty, l.prodJob||'',
+      (l.prodCredit||0).toFixed(2), (l.qtyIn*(l.prodCredit||0)).toFixed(2),
+      (l.prodCost||0).toFixed(2), (l.qty*(l.prodCost||0)).toFixed(2),
+      (l.prodValue||l.price||0).toFixed(2), (l.qty*(l.prodValue||l.price||0)).toFixed(2),
+      l.loc||'', l.prod?'In production':'Finished', l.prod?'':(l.job||HOLD)]));
+    download(`rexius-production-${today()}.csv`, csv(rows));
+    toast('Production pipeline exported');
+  };
+
   ['#h-q','#h-type','#h-by','#h-from','#h-to'].forEach(s =>
     $(s).addEventListener('input', renderHistory));
   $('#h-csv').onclick = () => {
@@ -4181,6 +4382,7 @@ function wire(){
       put('Returned', m.returned, false);
       put(`Given back to ${HOLD}`, m.toHold, true);
       put('Handed to another project', m.toOther, true);
+      put('Credited back from production', m.credits, false);
       put('Salvaged', m.salvaged, false);
     });
     download(`rexius-closed-projects-${today()}.csv`, csv(rows));
