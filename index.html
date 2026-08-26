@@ -746,7 +746,7 @@ const SIGNIN_SUFFIX = '@rexius.com';
 
 /* Shown in the bottom corner and on the Data tab. If the version on screen is
    not the one you just uploaded, the browser is serving an older copy. */
-const BUILD = '2026-08-26-as';
+const BUILD = '2026-08-26-at';
 /* =====================================================================
    ↑↑↑  nothing below here needs editing  ↑↑↑
    ===================================================================== */
@@ -1095,7 +1095,7 @@ function salvage(lot, qty, reason, date, note){
 /* Production: stepping a plant up a pot size. The smaller stock leaves
    inventory and a new lot is born at the new size, tagged In-Production
    until someone confirms it is job ready and prices the labour in. */
-function produce(lot, qty, newSize, date, note, cost, value){
+function produce(lot, qty, newSize, date, note){
   const fromJob = lot.job || HOLD;
   const unit = lot.price || 0;            // what the stock stood at before
   lot.qty -= qty;
@@ -1105,11 +1105,11 @@ function produce(lot, qty, newSize, date, note, cost, value){
     id: uid(), code: `${lot.code}.${kids+1}`, parent: lot.code,
     size: newSize, qtyIn: qty, qty, shipped: 0, lost: 0,
     prod: true, prodFrom: lot.size, prodStart: date || today(),
-    prodCost: Number(cost) || 0,          // what the step-up costs each
-    prodValue: Number(value) || 0,        // what it is worth after
-    prodCredit: unit,                     // credited back to the job it left
+    prodCost: 0,        // both of these are only known once it is finished
+    prodValue: 0,
+    prodCredit: unit,   // credited back to the job it left
     prodJob: fromJob,
-    price: Number(value) || 0,
+    price: 0,
     job: HOLD,                            // in production, on nobody's job
     ready: '', received: date || today(), note: '',
     created: new Date().toISOString()
@@ -1128,11 +1128,8 @@ function produce(lot, qty, newSize, date, note, cost, value){
     {date, job: fromJob, loc: lot.loc, value: qty * unit, note});
 
   const evC = logEvent(child, 'PRODUCE', qty,
-    `Potted up from ${lot.size} out of ${lot.code}`
-      + (cost ? ` at ${money(cost)} each to convert` : '')
-      + (value ? `, valued at ${money(value)} each` : ''),
-    {date, job: HOLD, loc: child.loc, parent: lot.code, from: fromJob, note,
-     value: qty * (Number(cost) || 0)});
+    `Potted up from ${lot.size} out of ${lot.code} — cost and value recorded when finished`,
+    {date, job: HOLD, loc: child.loc, parent: lot.code, from: fromJob, note});
 
   outbox({kind:'lot', lot:child},
     {kind:'move', lot_id:lot.id, d_qty:-qty, event:evP},
@@ -2955,19 +2952,26 @@ function renderProduction(){
       'Open a lot in the yard and choose Production to step it up a pot size.');
     return;
   }
-  const open = rows.filter(l => l.prod);
+  const open = rows.filter(l => l.prod), done = rows.filter(l => !l.prod);
   const qty = open.reduce((s,l) => s + l.qty, 0);
-  const inCost = open.reduce((s,l) => s + l.qty * (l.prodCost||0), 0);
   const credited = open.reduce((s,l) => s + l.qtyIn * (l.prodCredit||0), 0);
-  const worth = open.reduce((s,l) => s + l.qty * (l.prodValue||l.price||0), 0);
+  // Cost and value are only real once a lot has been finished.
+  const dQty = done.reduce((s,l) => s + l.qty, 0);
+  const dCredit = done.reduce((s,l) => s + l.qtyIn * (l.prodCredit||0), 0);
+  const dCost = done.reduce((s,l) => s + l.qty * (l.prodCost||0), 0);
+  const dValue = done.reduce((s,l) => s + l.qty * (l.prodValue||l.price||0), 0);
 
   $('#prodBody').innerHTML = `
     <div class="tally-strip">
-      <div><span class="k">In production</span><span class="v">${n0(qty)}<small>${n0(open.length)} lots</small></span></div>
-      <div><span class="k">Credited back</span><span class="v">${money(credited)}</span></div>
-      <div><span class="k">Conversion cost</span><span class="v" style="color:var(--bark)">${money(inCost)}</span></div>
-      <div><span class="k">Value when done</span><span class="v">${money(worth)}</span></div>
-      <div><span class="k">Added value</span><span class="v">${money(worth - credited - inCost)}</span></div>
+      <div><span class="k">Running now</span><span class="v">${n0(qty)}<small>${n0(open.length)} lots</small></span></div>
+      <div><span class="k">Credited out</span><span class="v">${money(credited)}<small>still to cost</small></span></div>
+      ${done.length?`
+      <div><span class="k">Finished</span><span class="v">${n0(dQty)}<small>${n0(done.length)} lots</small></span></div>
+      <div><span class="k">Cost to produce</span><span class="v" style="color:var(--bark)">${money(dCost)}</span></div>
+      <div><span class="k">Value produced</span><span class="v">${money(dValue)}</span></div>
+      <div><span class="k">Added value</span><span class="v" style="color:${
+        dValue - dCredit - dCost >= 0 ? 'var(--rex-dk)' : 'var(--rust)'}">${
+        money(dValue - dCredit - dCost)}</span></div>`:''}
     </div>
     <div class="tw"><table><thead><tr>
       <th>Lot</th><th>Plant</th><th>Cultivar</th>
@@ -2985,8 +2989,8 @@ function renderProduction(){
       <td class="num">${esc(l.loc||'—')}</td>
       <td>${l.prodJob?`<span class="chip ${l.prodJob===HOLD?'hold':'job'}">${esc(l.prodJob)}</span>`:'—'}</td>
       <td class="r num">${money(l.prodCredit||0)}</td>
-      <td class="r num">${money(l.prodCost||0)}</td>
-      <td class="r num">${money(l.prodValue||l.price||0)}</td>
+      <td class="r num">${l.prod ? '<span style="color:var(--grey)">—</span>' : money(l.prodCost||0)}</td>
+      <td class="r num">${l.prod ? '<span style="color:var(--grey)">—</span>' : money(l.prodValue||l.price||0)}</td>
       <td class="num" style="font-size:11.5px">${dshow(l.prodStart)}</td>
       <td>${l.prod?`<span class="chip prod">In production</span>`
         :`<span class="chip">Finished \u2192 ${esc(l.job||HOLD)}</span>`}</td>
@@ -3296,17 +3300,14 @@ function lotAction(kind){
           <input type="text" id="f-size" list="dl-size" placeholder="e.g. 2g" autocomplete="off"></label>
       </div>
       <div class="grid g2">
-        <label class="f"><span>Cost each to convert</span>
-          <input type="number" id="f-cost" class="mono" min="0" step="0.01" placeholder="0.00">
-          <div class="hint">Pot, media and labour — what the step-up costs.</div></label>
-        <label class="f"><span>Value each afterwards</span>
-          <input type="number" id="f-price" class="mono" min="0" step="0.01" placeholder="0.00">
-          <div class="hint">What the bigger plant is worth.</div></label>
+        <label class="f"><span>Date started</span>
+          <input type="date" id="f-date" class="mono" value="${today()}"></label>
+        <label class="f"><span>Note</span>
+          <input type="text" id="f-note" placeholder="Who potted it, what mix"></label>
       </div>
-      <label class="f"><span>Date started</span><input type="date" id="f-date" class="mono" value="${today()}"></label>
-      <label class="f"><span>Note</span><input type="text" id="f-note" placeholder="Who potted it, what mix"></label>
-      <p class="hint">${esc(l.job || HOLD)} is credited ${money(l.price)} each for the
-        ${n0(l.qty)} it gives up. The new lot sits in the production pipeline until it is finished.</p>`,
+      <p class="hint">${esc(l.job || HOLD)} is credited ${money(l.price)} each for the stock it
+        gives up. What the step-up costs and what the plant is then worth are entered when you
+        finish production, not now.</p>`,
 
     confirm: () => `<h2>Finish production</h2>
       <p style="margin:0 0 14px;font-size:13.5px">${n0(l.qtyIn)} × ${esc(l.prodFrom||'')} went in on
@@ -3321,10 +3322,13 @@ function lotAction(kind){
       <div class="grid g2">
         <label class="f"><span>Cost each to produce</span>
           <input type="number" id="f-cost" class="mono" min="0" step="0.01"
-            value="${l.prodCost||''}" placeholder="0.00"></label>
+            value="${l.prodCost||''}" placeholder="0.00">
+          <div class="hint">Pot, media and labour for the step-up.</div></label>
         <label class="f"><span>Value each now</span>
           <input type="number" id="f-price" class="mono" min="0" step="0.01"
-            value="${l.prodValue||l.price||''}" placeholder="0.00"></label>
+            value="${l.prodValue||''}" placeholder="0.00">
+          <div class="hint">${esc(l.prodJob||'The job')} was credited
+            ${money(l.prodCredit||0)} each when it went in.</div></label>
       </div>
       <div class="grid g2">
         <label class="f"><span>Allocate to</span>${jobSelectHTML('f-job', HOLD)}</label>
@@ -3444,11 +3448,7 @@ function commit(kind){
     if(!size) return fail('Name the size it is stepping up to.');
     if(size.toLowerCase() === (l.size||'').toLowerCase())
       return fail('That is the size it already is.');
-    const cost = val('#f-cost') === '' ? 0 : Number(val('#f-cost'));
-    const value = val('#f-price') === '' ? 0 : Number(val('#f-price'));
-    if(!(cost >= 0)) return fail('Cost each must be a number, or left blank.');
-    if(!(value >= 0)) return fail('Value each must be a number, or left blank.');
-    const c = produce(l, qty, size, date, note, cost, value);
+    const c = produce(l, qty, size, date, note);
     toast(`${n0(qty)} into production as ${size} — ${money(qty*(l.price||0))} credited to ${c.prodJob}`);
     drawerLot = c; $('#dtitle').textContent = c.code;
   }
