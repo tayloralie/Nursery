@@ -361,8 +361,15 @@ tr.open .twist{transform:rotate(90deg);color:var(--rex-dk)}
 /* ============ PRINT SHEET ============ */
 #sheet,#docsheet{display:none}
 @media print{
+  /* The app shell is hidden wholesale, and the full-height rule that keeps the
+     rail stretched on screen is released — left in place it claims a whole
+     sheet of paper before any content starts, which prints as a blank page. */
+  html,body{height:auto!important;min-height:0!important;overflow:visible!important}
+  .app{display:none!important}
   .rail,.strip,.view,.drawer,.scrim,.toasts,.noprint{display:none!important}
   body{background:#fff}
+  #sheet,#docsheet{margin:0;padding:0}
+  #docsheet > .doc:first-child{margin-top:0}
   body.pr-doc #sheet{display:none!important}
   body.pr-tags #docsheet{display:none!important}
   body.pr-doc #docsheet{display:block!important}
@@ -722,7 +729,7 @@ const SIGNIN_SUFFIX = '@rexius.com';
 
 /* Shown in the bottom corner and on the Data tab. If the version on screen is
    not the one you just uploaded, the browser is serving an older copy. */
-const BUILD = '2026-08-26-ao';
+const BUILD = '2026-08-26-ap';
 /* =====================================================================
    ↑↑↑  nothing below here needs editing  ↑↑↑
    ===================================================================== */
