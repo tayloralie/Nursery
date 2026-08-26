@@ -345,10 +345,13 @@ tr.open .twist{transform:rotate(90deg);color:var(--rex-dk)}
 @keyframes rise{from{opacity:0;transform:translateY(8px)}}
 
 /* ============ PRINT SHEET ============ */
-#sheet{display:none}
+#sheet,#docsheet{display:none}
 @media print{
   .rail,.strip,.view,.drawer,.scrim,.toasts,.noprint{display:none!important}
   body{background:#fff}
+  body.pr-doc #sheet{display:none!important}
+  body.pr-tags #docsheet{display:none!important}
+  body.pr-doc #docsheet{display:block!important}
   #sheet{display:grid!important;grid-template-columns:1fr 1fr;gap:0}
   #sheet .tag{width:auto;height:2in;margin:0;box-shadow:none;border:1px dashed #999;
     break-inside:avoid;padding:.1in .14in}
@@ -356,7 +359,42 @@ tr.open .twist{transform:rotate(90deg);color:var(--rex-dk)}
   #sheet .tag .tjob{font-size:22pt;color:#000}
   #sheet .tag .tflag{background:#000;color:#fff}
   #sheet .tag .tbot{font-size:12pt}
-  @page{size:letter;margin:.4in}
+  @page{size:letter;margin:.5in}
+  /* ---- project sheet ---- */
+  #docsheet{color:#000;font-size:10pt}
+  #docsheet .doc{break-after:page}
+  #docsheet .doc:last-child{break-after:auto}
+  #docsheet .dh{border-bottom:2px solid #000;padding-bottom:6pt;margin-bottom:10pt;
+    display:flex;align-items:baseline;gap:10pt}
+  #docsheet .dh b{font-family:var(--cond);text-transform:uppercase;letter-spacing:.12em;
+    font-size:16pt}
+  #docsheet .dh .who{font-family:var(--cond);text-transform:uppercase;letter-spacing:.14em;
+    font-size:8.5pt;margin-left:auto}
+  #docsheet .dsum{font-family:var(--mono);font-size:9pt;margin-bottom:10pt}
+  #docsheet table{width:100%;border-collapse:collapse}
+  #docsheet thead{display:table-header-group}
+  #docsheet th{font-family:var(--cond);text-transform:uppercase;letter-spacing:.1em;
+    font-size:8pt;text-align:left;border-bottom:1px solid #000;padding:4pt 6pt}
+  #docsheet td{padding:3.5pt 6pt;border-bottom:.5pt solid #bbb;vertical-align:top;
+    break-inside:avoid}
+  #docsheet td.r,#docsheet th.r{text-align:center}
+  #docsheet .grp td{background:#eee;font-family:var(--cond);text-transform:uppercase;
+    letter-spacing:.1em;font-size:8.5pt;font-weight:700;border-bottom:1px solid #000}
+  #docsheet .bot{font-style:italic}
+  #docsheet .com{font-family:var(--cond);text-transform:uppercase;letter-spacing:.06em;
+    font-size:8pt;color:#444}
+  #docsheet tfoot td{border-top:1px solid #000;font-weight:700;
+    font-family:var(--mono);padding-top:5pt}
+  #docsheet h3{font-family:var(--cond);text-transform:uppercase;letter-spacing:.13em;
+    font-size:10pt;margin:14pt 0 5pt;padding-bottom:3pt;border-bottom:1px solid #000;
+    break-after:avoid}
+  #docsheet h3 span{font-family:var(--mono);font-size:8.5pt;letter-spacing:0;float:right;
+    text-transform:none}
+  #docsheet .none{font-size:9pt;color:#555;font-style:italic;margin:0 0 6pt}
+  #docsheet .tally{display:flex;flex-wrap:wrap;gap:0 18pt;font-family:var(--mono);
+    font-size:9pt;margin-bottom:10pt;padding:6pt 0;border-bottom:.5pt solid #999}
+  #docsheet .tally i{font-style:normal;color:#555}
+  #docsheet .off td{background:#f4f4f4}
 }
 
 /* ============ RESPONSIVE ============ */
@@ -486,6 +524,7 @@ tr.open .twist{transform:rotate(90deg);color:var(--rex-dk)}
           <option value="warn">Needs attention</option>
           <option value="gone">Cleared out</option>
         </select></label>
+        <button class="btn ghost sm" id="y-clear" style="margin-bottom:0">Clear filters</button>
         <button class="btn ghost sm" id="y-csv" style="margin-bottom:0">Export CSV</button>
       </div>
       <div id="yardBody"></div>
@@ -554,6 +593,29 @@ tr.open .twist{transform:rotate(90deg);color:var(--rex-dk)}
       <h1>Data</h1>
       <p class="sub">Where this device stands, and how to get a copy of it out.</p>
       <div class="card" style="max-width:640px;margin-bottom:20px">
+        <h2>Project sheets</h2>
+        <p style="font-size:13.5px;margin:0 0 14px">What is standing in the yard for a job —
+          plants, sizes, counts, blocks and lot codes. Print it for the crew or export it
+          for the office.</p>
+        <div class="grid g3">
+          <label class="f"><span>Project</span><select id="x-job"></select></label>
+          <label class="f"><span>Sheet</span><select id="x-kind">
+            <option value="stock">What is on hand</option>
+            <option value="history">Full history</option>
+          </select></label>
+          <label class="f"><span>Group by</span><select id="x-group">
+            <option value="plant">Plant</option>
+            <option value="loc">Block</option>
+          </select></label>
+        </div>
+        <div class="row" style="margin-bottom:6px">
+          <button class="btn go" id="x-print">Print sheet</button>
+          <button class="btn" id="x-csv">Export CSV</button>
+        </div>
+        <div id="x-prev" class="hint" style="margin-top:10px"></div>
+      </div>
+
+      <div class="card" style="max-width:640px;margin-bottom:20px">
         <h2>Supabase</h2>
         <div id="sbPanel"></div>
       </div>
@@ -596,6 +658,7 @@ tr.open .twist{transform:rotate(90deg);color:var(--rex-dk)}
 </aside>
 <div class="toasts" id="toasts" aria-live="polite"></div>
 <div id="sheet"></div>
+<div id="docsheet"></div>
 
 <datalist id="dl-bot"></datalist><datalist id="dl-com"></datalist>
 <datalist id="dl-size"></datalist><datalist id="dl-job"></datalist>
@@ -640,7 +703,7 @@ const SIGNIN_SUFFIX = '@rexius.com';
 
 /* Shown in the bottom corner and on the Data tab. If the version on screen is
    not the one you just uploaded, the browser is serving an older copy. */
-const BUILD = '2026-08-26-w';
+const BUILD = '2026-08-26-ac';
 /* =====================================================================
    ↑↑↑  nothing below here needs editing  ↑↑↑
    ===================================================================== */
@@ -773,6 +836,11 @@ const uid = () => Math.random().toString(36).slice(2,10);
 /* Some of the crew read botanical names, some read common ones. Both are
    always shown; the toggle only decides which leads. */
 function nameMode(){ return (DB.pref && DB.pref.names) || 'bot'; }
+/* Sorting follows whichever name is on top, so the list reads in order. */
+const sortName = l => (nameMode() === 'com' && l.com ? l.com : l.bot || l.com || '');
+const byName = (a,b) => sortName(a).localeCompare(sortName(b))
+  || String(a.cult||'').localeCompare(String(b.cult||''))
+  || String(a.size||'').localeCompare(String(b.size||''), undefined, {numeric:true});
 function botHTML(l, cls){
   return `<span class="bot${cls?' '+cls:''}">${esc(l.bot)}</span>` +
     (l.cult ? ` <span class="cult">\u2018${esc(l.cult)}\u2019</span>` : '');
@@ -1028,6 +1096,20 @@ function editLot(lot, f, applyAll){
   const before = {bot:lot.bot, cult:lot.cult||'', com:lot.com||'', size:lot.size||'',
                   loc:lot.loc||'', grower:lot.grower||'', price:lot.price||0,
                   received:lot.received||'', note:lot.note||''};
+
+  /* A corrected count belongs to this lot alone and moves stock, so it is
+     recorded as its own entry with a delta the server can apply safely even
+     if someone else counted the same lot while offline. */
+  if(f.qty !== undefined && f.qty !== '' && Number(f.qty) !== lot.qty){
+    const was = lot.qty, now = Math.floor(Number(f.qty));
+    const d = now - was;
+    lot.qty = now;
+    const ev = logEvent(lot, 'EDIT', Math.abs(d),
+      `Count corrected from ${n0(was)} to ${n0(now)} (${d > 0 ? '+' : ''}${n0(d)})`
+        + (f.note ? ` — ${f.note}` : ''),
+      {date: today(), job: lot.job, loc: lot.loc});
+    outbox({kind:'move', lot_id:lot.id, d_qty:d, event:ev});
+  }
   const nameChanged = f.bot !== before.bot || f.cult !== before.cult || f.com !== before.com;
   const targets = [lot];
 
@@ -1460,7 +1542,8 @@ function jobRollup(){
     r.lots++; r.qty += l.qty; r.val += l.qty * (l.price||0); m.set(k, r);
   });
   return Array.from(m.values()).sort((a,b) =>
-    (a.job === HOLD) - (b.job === HOLD) || b.qty - a.qty);
+    (a.job === HOLD) - (b.job === HOLD) ||
+    a.job.localeCompare(b.job, undefined, {numeric:true, sensitivity:'base'}));
 }
 function locRollup(){
   const m = new Map();
@@ -1469,7 +1552,9 @@ function locRollup(){
     const r = m.get(k) || {loc:k, lots:0, qty:0, jobs:new Set()};
     r.lots++; r.qty += l.qty; r.jobs.add(l.job || HOLD); m.set(k, r);
   });
-  return Array.from(m.values()).sort((a,b) => b.qty - a.qty);
+  return Array.from(m.values()).sort((a,b) =>
+    String(a.loc).localeCompare(String(b.loc), undefined,
+      {numeric:true, sensitivity:'base'}));
 }
 
 /* =====================================================================
@@ -1659,7 +1744,7 @@ function renderSyncUI(){
   else                      { cls='ok';   txt='Synced'; }
   pill.className = 'syncpill ' + cls;
   pill.innerHTML = `<i></i><span>${esc(txt)}</span>`;
-  if(current === 'data') renderSbPanel();
+  if(current === 'data'){ renderSbPanel(); renderExportPanel(); }
 }
 
 function renderSbPanel(){
@@ -1855,8 +1940,6 @@ function renderBoard(){
     return;
   }
   const jr = jobRollup(), lr = locRollup(), max = Math.max(...jr.map(r => r.qty), 1);
-  jr.sort((a,b) => (a.job === HOLD) - (b.job === HOLD) || a.job.localeCompare(b.job));
-  lr.sort((a,b) => String(a.loc).localeCompare(String(b.loc), undefined, {numeric:true}));
   const recent = DB.events.slice(0, 10);
   $('#boardBody').innerHTML = `
     <div class="grid g2" style="gap:0 26px;align-items:start">
@@ -1892,11 +1975,13 @@ function renderBoard(){
         </div>
       </div>
     </div>`;
-  $$('#boardBody tr[data-job]').forEach(tr => tr.onclick = () => {
-    go('yard'); $('#y-job').value = tr.dataset.job; renderYard();
-  });
+  $$('#boardBody tr[data-job]').forEach(tr => tr.onclick = () => showJobInYard(tr.dataset.job));
   $$('#boardBody tr[data-loc]').forEach(tr => tr.onclick = () => {
-    go('yard'); $('#y-loc').value = tr.dataset.loc; renderYard();
+    go('yard');
+    $('#y-q').value = ''; $('#y-job').value = ''; $('#y-size').value = '';
+    $('#y-loc').value = tr.dataset.loc;
+    if($('#y-group').value === 'loc') $('#y-group').value = 'plant';
+    openRows.clear(); renderYard(); window.scrollTo(0,0);
   });
 }
 
@@ -1917,8 +2002,10 @@ function yardFilters(){
       arr.map(v => `<option${v===keep?' selected':''}>${esc(v)}</option>`).join('');
   };
   opts('#y-job', [HOLD].concat(allJobs()), 'Every project');
-  opts('#y-loc', allLocs(), 'Every block');
-  opts('#y-size', uniqSorted(DB.lots.map(l => l.size)), 'Every size');
+  opts('#y-loc', allLocs().slice().sort((a,b) =>
+    String(a).localeCompare(String(b), undefined, {numeric:true})), 'Every block');
+  opts('#y-size', uniqSorted(DB.lots.map(l => l.size)).sort((a,b) =>
+    String(a).localeCompare(String(b), undefined, {numeric:true})), 'Every size');
 }
 
 function yardLots(){
@@ -1943,16 +2030,58 @@ function yardLots(){
   });
 }
 
+/* Anything narrowing the view, excluding grouping and name order — those
+   change how it reads, not what is in it. */
+function yardFiltersOn(){
+  return !!($('#y-q').value.trim() || $('#y-job').value || $('#y-loc').value
+    || $('#y-size').value || $('#y-status').value !== 'live');
+}
+/* Arriving at the yard filtered to one project. Whatever grouping and status
+   the person normally works in is kept — the only thing that changes is which
+   project is in view. Grouping by project while looking at one project is the
+   single exception, since that collapses to a single row. */
+function showJobInYard(job){
+  go('yard');
+  $('#y-q').value = '';
+  $('#y-job').value = job;
+  $('#y-loc').value = ''; $('#y-size').value = '';
+  if($('#y-status').value === 'gone' || $('#y-status').value === 'warn')
+    $('#y-status').value = 'live';
+  if($('#y-group').value === 'job') $('#y-group').value = 'plant';
+  openRows.clear();
+  renderYard();
+  window.scrollTo(0,0);
+}
+
+function clearYardFilters(){
+  $('#y-q').value = '';
+  ['#y-job','#y-loc','#y-size'].forEach(s => $(s).value = '');
+  $('#y-status').value = 'live';
+  openRows.clear();
+  renderYard();
+  $('#y-q').focus();
+}
+
 function renderYard(){
   yardFilters();
+  const clr = $('#y-clear');
+  if(clr){
+    const on = yardFiltersOn();
+    clr.disabled = !on;
+    clr.textContent = on ? 'Clear filters' : 'No filters set';
+  }
   const rows = yardLots(), group = $('#y-group').value;
   const qty = rows.reduce((s,l) => s + l.qty, 0);
   const unalloc = rows.filter(l => (l.job||HOLD) === HOLD).reduce((s,l) => s + l.qty, 0);
   const prod = rows.filter(l => l.prod).reduce((s,l) => s + l.qty, 0);
 
   if(!rows.length){
-    $('#yardBody').innerHTML = emptyState('Nothing matches',
-      'Loosen the filters, or clear the search box.');
+    $('#yardBody').innerHTML = `<div class="empty"><b>Nothing matches</b>
+      No lot fits the filters you have set.
+      <div class="row" style="justify-content:center;margin-top:14px">
+        <button class="btn" id="y-clear2">Clear filters and show everything</button>
+      </div></div>`;
+    $('#y-clear2').onclick = clearYardFilters;
     return;
   }
   const strip = `<div class="tally-strip">
@@ -1990,10 +2119,7 @@ function renderYard(){
   // A project name anywhere is a filter for that project.
   $$('#yardBody [data-jobfilter]').forEach(a => a.onclick = e => {
     e.preventDefault(); e.stopPropagation();
-    $('#y-job').value = a.dataset.jobfilter;
-    $('#y-group').value = 'lot';
-    renderYard();
-    window.scrollTo(0,0);
+    showJobInYard(a.dataset.jobfilter);
   });
   $$('#yardBody [data-recv]').forEach(b => b.onclick = e => {
     e.stopPropagation();
@@ -2003,6 +2129,8 @@ function renderYard(){
 
 /* ---------- flat: every lot ---------- */
 function yardByLot(rows){
+  rows = rows.slice().sort((a,b) => byName(a,b) ||
+    String(a.code).localeCompare(String(b.code), undefined, {numeric:true}));
   const CAP = 300, m = priced();
   return `<div class="tw"><table><thead><tr>
     <th>Lot</th><th>Plant</th><th>Size</th><th class="r">On hand</th>
@@ -2013,11 +2141,14 @@ function yardByLot(rows){
     <td>${nameHTML(l)}</td>
     <td class="num">${esc(l.size)}</td>
     <td class="r num"><b${l.qty<0?' style="color:var(--rust)"':''}>${n0(l.qty)}</b>${
-      l.qty!==l.qtyIn?`<br><span style="font-size:10px;color:var(--grey)">of ${n0(l.qtyIn)}</span>`:''}</td>
+      l.qty > 0 && l.qty !== l.qtyIn
+        ? `<br><span style="font-size:10px;color:var(--grey)">of ${n0(l.qtyIn)}</span>` : ''}</td>
     <td><a href="#" class="jobfilter" data-jobfilter="${esc(l.job||HOLD)}"><span class="chip ${
       (!l.job||l.job===HOLD)?'hold':'job'}">${esc(l.job||HOLD)}</span></a></td>
     <td class="num">${esc(l.loc||'—')}</td>
-    <td>${l.prod?`<span class="chip prod">In production</span>`:l.qty<0?`<span class="chip dead">Check</span>`:''}</td>
+    <td>${l.prod ? `<span class="chip prod">In production</span>`
+      : l.qty < 0 ? `<span class="chip dead">Check</span>`
+      : l.qty === 0 ? `<span class="chip">Cleared out</span>` : ''}</td>
     <td class="num" style="font-size:11.5px">${dshow(l.received)}</td>
     ${m?`<td class="r num">${money(l.qty*(l.price||0))}</td>`:''}
     <td class="r" style="white-space:nowrap"><button class="btn ghost sm" data-move="${l.id}">Edit</button></td>
@@ -2044,8 +2175,8 @@ function yardByPlant(rows){
       if(l.size) r.sizes.add(l.size);
     } else r.cleared++;
   });
-  const list = Array.from(m.entries()).sort((a,b) =>
-    a[1].bot.localeCompare(b[1].bot) || (a[1].cult||'').localeCompare(b[1].cult||''));
+  const list = Array.from(m.entries()).sort((a,b) => byName(a[1], b[1])
+    || (a[1].com||'').localeCompare(b[1].com||''));
   return `<div class="tw"><table><thead><tr>
     <th>Plant</th><th>Common name</th><th>Sizes</th><th class="r">On hand</th>
     <th class="r">On projects</th><th class="r">${esc(HOLD)}</th><th>Projects</th><th>Blocks</th>
@@ -2115,7 +2246,7 @@ function yardByGroup(rows, mode){
 function splitTable(r){
   const live = r.lots.filter(l => l.qty > 0).sort((a,b) =>
     ((a.job||HOLD) === HOLD) - ((b.job||HOLD) === HOLD) ||
-    (a.job||HOLD).localeCompare(b.job||HOLD) ||
+    (a.job||HOLD).localeCompare(b.job||HOLD, undefined, {numeric:true}) ||
     (a.size||'').localeCompare(b.size||'', undefined, {numeric:true}) ||
     (a.loc||'').localeCompare(b.loc||'', undefined, {numeric:true}));
   if(!live.length) return `<p style="margin:0;font-size:13px;color:var(--grey)">None on hand — ${n0(r.cleared)} cleared lot${r.cleared===1?'':'s'}.</p>`;
@@ -2135,8 +2266,9 @@ function splitTable(r){
 }
 
 function groupTable(r, mode){
-  const live = r.lots.filter(l => l.qty > 0)
-    .sort((a,b) => b.qty - a.qty || a.bot.localeCompare(b.bot));
+  const live = r.lots.filter(l => l.qty > 0).sort((a,b) =>
+    byName(a,b) ||
+    String(a.loc||'').localeCompare(String(b.loc||''), undefined, {numeric:true}));
   if(!live.length) return `<p style="margin:0;font-size:13px;color:var(--grey)">Nothing on hand here.</p>`;
   return `<table><thead><tr>
     <th>Plant</th><th>Size</th><th>${mode==='loc'?'Project':'Block'}</th>
@@ -2260,9 +2392,7 @@ function renderJobs(){
   });
   $$('#jobsBody tr[data-job]').forEach(tr => tr.onclick = e => {
     if(e.target.closest('button')) return;
-    go('yard');
-    $('#y-group').value = 'lot'; $('#y-job').value = tr.dataset.job;
-    $('#y-status').value = 'all'; renderYard();
+    showJobInYard(tr.dataset.job);
   });
   if(jobForm) drawJobForm();
 }
@@ -2560,6 +2690,15 @@ function lotAction(kind){
         <label class="f"><span>Size</span>
           <input type="text" id="f-size" class="mono" value="${esc(l.size||'')}" autocomplete="off"></label>
       </div>
+      <div class="grid g2">
+        <label class="f"><span>On hand</span>
+          <input type="number" id="f-qty" class="mono" step="1" value="${l.qty}">
+          <div class="hint">${n0(l.qtyIn)} received${l.shipped?`, ${n0(l.shipped)} shipped`:''}${
+            l.lost?`, ${n0(l.lost)} salvaged`:''}. Set this to what a physical count found —
+            it stays with this lot only.</div></label>
+        <label class="f"><span>Date received</span>
+          <input type="date" id="f-date" class="mono" value="${esc(l.received||'')}"></label>
+      </div>
       <div class="grid g3">
         <label class="f"><span>Block</span>
           <input type="text" id="f-loc" list="dl-loc" value="${esc(l.loc||'')}"></label>
@@ -2568,8 +2707,6 @@ function lotAction(kind){
         <label class="f"><span>Price each</span>
           <input type="number" id="f-price" class="mono" min="0" step="0.01" value="${l.price||''}"></label>
       </div>
-      <label class="f"><span>Date received</span>
-        <input type="date" id="f-date" class="mono" value="${esc(l.received||'')}"></label>
       <label class="f"><span>Note</span>
         <input type="text" id="f-note" value="${esc(l.note||'')}"></label>
       ${(() => {
@@ -2672,11 +2809,21 @@ function commit(kind){
     if(!bot) return fail('A botanical name is required.');
     const price = val('#f-price') === '' ? 0 : Number(val('#f-price'));
     if(!(price >= 0)) return fail('Price each must be a number, or blank.');
+    const rawQty = val('#f-qty');
+    if(rawQty === '' || isNaN(Number(rawQty)))
+      return fail('On hand must be a number.');
+    const newQty = Math.floor(Number(rawQty));
+    if(newQty < 0 && l.qty >= 0 &&
+       !confirm(`Set ${l.code} to ${n0(newQty)}? A negative count usually means something `
+         + `was shipped or written off without being recorded.`)) return;
+    const was = l.qty;
     const all = $('#f-all') ? $('#f-all').checked : false;
     const n = editLot(l, {bot, cult: val('#f-cult'), com: val('#f-com'),
       size: val('#f-size'), loc: val('#f-loc'), grower: val('#f-grow'),
-      price, received: val('#f-date'), note}, all);
-    toast(n > 1 ? `Corrected ${n0(n)} lots` : `${l.code} corrected`);
+      price, received: val('#f-date'), note, qty: newQty}, all);
+    toast(newQty !== was
+      ? `${l.code} recounted at ${n0(newQty)}`
+      : (n > 1 ? `Corrected ${n0(n)} lots` : `${l.code} corrected`));
   }
   if(kind === 'confirm'){
     const price = Number(val('#f-price'));
@@ -2900,6 +3047,264 @@ function renderTags(){
     DB.queue = DB.queue.filter(x => x !== b.dataset.rm); save(); renderAll();
   });
   $('#sheet').innerHTML = lots.map(l => tagHTML(l)).join('');
+}
+
+/* =====================================================================
+   PROJECT SHEETS
+   A printed sheet of what is standing for a job: the crew take it into the
+   yard, the office keeps it with the paperwork.
+   ===================================================================== */
+function projectLots(job){
+  return DB.lots.filter(l => l.qty > 0 && (job === '*' || (l.job || HOLD) === job));
+}
+
+function projectDoc(job, group){
+  const lots = projectLots(job);
+  if(!lots.length) return '';
+  const jobs = job === '*'
+    ? uniqSorted(lots.map(l => l.job || HOLD)).sort((a,b) =>
+        (a === HOLD) - (b === HOLD) || a.localeCompare(b, undefined, {numeric:true}))
+    : [job];
+
+  return jobs.map(name => {
+    const mine = lots.filter(l => (l.job || HOLD) === name);
+    const qty = mine.reduce((s,l) => s + l.qty, 0);
+    const blocks = uniqSorted(mine.map(l => l.loc))
+      .sort((a,b) => String(a).localeCompare(String(b), undefined, {numeric:true}));
+    const kinds = new Set(mine.map(lotKey)).size;
+
+    // rows carry a grouping key so the sheet reads in runs
+    const rows = mine.slice().sort((a,b) => group === 'loc'
+      ? String(a.loc||'').localeCompare(String(b.loc||''), undefined, {numeric:true}) || byName(a,b)
+      : byName(a,b) || String(a.loc||'').localeCompare(String(b.loc||''), undefined, {numeric:true}));
+
+    let last = null, body = '';
+    rows.forEach(l => {
+      const key = group === 'loc' ? (l.loc || 'No block') : sortName(l);
+      if(key !== last){
+        last = key;
+        body += `<tr class="grp"><td colspan="6">${esc(key)}</td></tr>`;
+      }
+      body += `<tr>
+        <td>${group === 'loc'
+          ? `<span class="bot">${esc(l.bot)}</span>${l.cult?` \u2018${esc(l.cult)}\u2019`:''}`
+            + (l.com?`<span class="com"> ${esc(l.com)}</span>`:'')
+          : `<span class="com">${esc(l.com||'')}</span>`}</td>
+        <td>${esc(l.size||'')}</td>
+        <td class="r">${n0(l.qty)}</td>
+        <td>${esc(group === 'loc' ? (l.job||HOLD) : (l.loc||''))}</td>
+        <td>${esc(l.code)}</td>
+        <td>${l.prod ? 'in production' : ''}${l.grower ? (l.prod?' · ':'') + esc(l.grower) : ''}</td>
+      </tr>`;
+    });
+
+    return `<div class="doc">
+      <div class="dh"><b>${esc(name)}</b>
+        <span class="who">Rexius Nursery · ${esc(dshow(today()))}</span></div>
+      <div class="dsum">${n0(qty)} plants · ${n0(mine.length)} lots · ${n0(kinds)} kinds ·
+        blocks ${esc(blocks.join(', ') || '—')}${
+        priced() ? ` · ${money(mine.reduce((s,l)=>s+l.qty*(l.price||0),0))}` : ''}</div>
+      <table><thead><tr>
+        <th>${group === 'loc' ? 'Plant' : 'Common name'}</th><th>Size</th>
+        <th class="r">Qty</th><th>${group === 'loc' ? 'Project' : 'Block'}</th>
+        <th>Lot</th><th>Notes</th>
+      </tr></thead><tbody>${body}</tbody>
+      <tfoot><tr><td colspan="2">Total</td><td class="r">${n0(qty)}</td>
+        <td colspan="3"></td></tr></tfoot></table>
+    </div>`;
+  }).join('');
+}
+
+/* Everything that has happened to a job: what came in, what is standing,
+   what went out to site, and what was taken off the project again. */
+function jobMovements(job){
+  const mine = e => (e.job || HOLD) === job;
+  return {
+    received: DB.events.filter(e => e.type === 'RECEIVE' && mine(e)),
+    shipped:  DB.events.filter(e => e.type === 'SHIP' && mine(e)),
+    returned: DB.events.filter(e => e.type === 'RETURN' && mine(e)),
+    salvaged: DB.events.filter(e => e.type === 'SALVAGE' && mine(e)),
+    // taken off this project — the destination is on the event
+    offTo:    DB.events.filter(e => e.type === 'TRANSFER' && (e.from || '') === job
+                                    && (e.job || HOLD) !== job),
+    // moved onto this project from somewhere else
+    onFrom:   DB.events.filter(e => e.type === 'TRANSFER' && mine(e)
+                                    && (e.from || '') && e.from !== job),
+  };
+}
+
+function evRows(list, destCol){
+  return list.slice().sort((a,b) => String(a.date).localeCompare(String(b.date))
+      || byName(a,b))
+    .map(e => `<tr${destCol && (e.job || HOLD) === HOLD ? ' class="off"' : ''}>
+      <td>${esc(dshow(e.date))}</td>
+      <td><span class="bot">${esc(e.bot||'')}</span>${e.cult?` \u2018${esc(e.cult)}\u2019`:''}${
+        e.com?`<span class="com"> ${esc(e.com)}</span>`:''}</td>
+      <td>${esc(e.size||'')}</td>
+      <td class="r">${n0(e.qty)}</td>
+      <td>${esc(destCol ? (e.job || HOLD) : (e.loc || ''))}</td>
+      <td>${esc(e.lot||'')}</td>
+      <td>${esc(e.note || e.reason || '')}</td>
+    </tr>`).join('');
+}
+
+function section(title, list, destCol, destLabel){
+  const qty = list.reduce((s,e) => s + e.qty, 0);
+  if(!list.length)
+    return `<h3>${esc(title)}<span>none</span></h3><p class="none">Nothing recorded.</p>`;
+  return `<h3>${esc(title)}<span>${n0(qty)} plants · ${n0(list.length)} movement${
+      list.length===1?'':'s'}</span></h3>
+    <table><thead><tr>
+      <th>Date</th><th>Plant</th><th>Size</th><th class="r">Qty</th>
+      <th>${esc(destCol ? destLabel : 'Block')}</th><th>Lot</th><th>Note</th>
+    </tr></thead><tbody>${evRows(list, destCol)}</tbody>
+    <tfoot><tr><td colspan="3">Total</td><td class="r">${n0(qty)}</td>
+      <td colspan="3"></td></tr></tfoot></table>`;
+}
+
+function jobHistoryDoc(job, group){
+  const jobs = job === '*'
+    ? uniqSorted(DB.lots.map(l => l.job || HOLD)
+        .concat(DB.events.map(e => e.job || '').concat(DB.events.map(e => e.from || ''))))
+        .filter(Boolean)
+        .sort((a,b) => (a === HOLD) - (b === HOLD) || a.localeCompare(b, undefined, {numeric:true}))
+    : [job];
+
+  return jobs.map(name => {
+    const m = jobMovements(name);
+    const onHand = projectLots(name);
+    const total = k => m[k].reduce((s,e) => s + e.qty, 0);
+    const heldQty = onHand.reduce((s,l) => s + l.qty, 0);
+    const any = heldQty || Object.keys(m).some(k => m[k].length);
+    if(!any) return '';
+
+    const stock = onHand.length
+      ? (() => {
+          const rows = onHand.slice().sort((a,b) => group === 'loc'
+            ? String(a.loc||'').localeCompare(String(b.loc||''), undefined, {numeric:true}) || byName(a,b)
+            : byName(a,b));
+          return `<table><thead><tr>
+            <th>Plant</th><th>Size</th><th class="r">Qty</th><th>Block</th>
+            <th>Lot</th><th>Note</th></tr></thead><tbody>${rows.map(l => `<tr>
+            <td><span class="bot">${esc(l.bot)}</span>${l.cult?` \u2018${esc(l.cult)}\u2019`:''}${
+              l.com?`<span class="com"> ${esc(l.com)}</span>`:''}</td>
+            <td>${esc(l.size||'')}</td><td class="r">${n0(l.qty)}</td>
+            <td>${esc(l.loc||'')}</td><td>${esc(l.code)}</td>
+            <td>${l.prod?'in production':''}</td></tr>`).join('')}</tbody>
+            <tfoot><tr><td colspan="2">Total</td><td class="r">${n0(heldQty)}</td>
+              <td colspan="3"></td></tr></tfoot></table>`;
+        })()
+      : `<p class="none">Nothing standing in the yard for this job.</p>`;
+
+    return `<div class="doc">
+      <div class="dh"><b>${esc(name)}</b>
+        <span class="who">Rexius Nursery · job history · ${esc(dshow(today()))}</span></div>
+      <div class="tally">
+        <span><i>received</i> ${n0(total('received'))}</span>
+        <span><i>moved on</i> ${n0(total('onFrom'))}</span>
+        <span><i>on hand</i> <b>${n0(heldQty)}</b></span>
+        <span><i>shipped out</i> <b>${n0(total('shipped'))}</b></span>
+        <span><i>returned</i> ${n0(total('returned'))}</span>
+        <span><i>taken off the job</i> ${n0(total('offTo'))}</span>
+        <span><i>salvaged</i> ${n0(total('salvaged'))}</span>
+      </div>
+      <h3>On hand now<span>${n0(heldQty)} plants · ${n0(onHand.length)} lots</span></h3>
+      ${stock}
+      ${section('Shipped to site', m.shipped, false)}
+      ${section('Taken off this job', m.offTo, true, 'Moved to')}
+      ${section('Brought onto this job', m.onFrom, true, 'Came from')}
+      ${section('Returned from site', m.returned, false)}
+      ${section('Salvaged', m.salvaged, false)}
+    </div>`;
+  }).filter(Boolean).join('');
+}
+
+function exportJobHistoryCSV(job){
+  const jobs = job === '*'
+    ? uniqSorted(DB.lots.map(l => l.job || HOLD)
+        .concat(DB.events.map(e => e.job || ''), DB.events.map(e => e.from || ''))).filter(Boolean)
+    : [job];
+  const rows = [['Project','Section','Date','Botanical','Cultivar','Common name','Size',
+    'Qty','Block','Moved to / from','Lot','By','Note']];
+  jobs.forEach(name => {
+    projectLots(name).slice().sort(byName).forEach(l =>
+      rows.push([name,'On hand',l.received||'',l.bot,l.cult||'',l.com||'',l.size,l.qty,
+        l.loc||'','',l.code,'',l.note||'']));
+    const m = jobMovements(name);
+    const put = (label, list, dest) => list.slice()
+      .sort((a,b) => String(a.date).localeCompare(String(b.date)))
+      .forEach(e => rows.push([name,label,e.date||'',e.bot||'',e.cult||'',e.com||'',
+        e.size||'',e.qty,e.loc||'', dest ? (e.job||HOLD) : '', e.lot||'', e.done_by||'',
+        e.note||e.reason||'']));
+    put('Shipped', m.shipped, false);
+    put('Taken off the job', m.offTo, true);
+    put('Brought onto the job', m.onFrom, true);
+    put('Returned', m.returned, false);
+    put('Salvaged', m.salvaged, false);
+  });
+  if(rows.length === 1) return toast('Nothing recorded for that project', 'bad');
+  const tag = job === '*' ? 'all-projects' : job.toLowerCase().replace(/[^a-z0-9]+/g,'-');
+  download(`rexius-${tag}-history-${today()}.csv`, csv(rows));
+  toast(`${n0(rows.length-1)} lines exported`);
+}
+
+function renderExportPanel(){
+  const sel = $('#x-job'); if(!sel) return;
+  const keep = sel.value;
+  const jobs = uniqSorted(live().map(l => l.job || HOLD))
+    .sort((a,b) => (a === HOLD) - (b === HOLD) || a.localeCompare(b, undefined, {numeric:true}));
+  sel.innerHTML = `<option value="*"${keep==='*'?' selected':''}>Every project</option>`
+    + jobs.map(n => `<option${n===keep?' selected':''}>${esc(n)}</option>`).join('');
+  if(keep) sel.value = keep;
+
+  const job = sel.value || '*';
+  const kind = $('#x-kind') ? $('#x-kind').value : 'stock';
+  const lots = projectLots(job);
+  const qty = lots.reduce((s,l) => s + l.qty, 0);
+  if(kind === 'history' && job !== '*'){
+    const m = jobMovements(job);
+    const t = k => m[k].reduce((s,e) => s + e.qty, 0);
+    $('#x-prev').innerHTML = `on hand <b>${n0(qty)}</b> · shipped <b>${n0(t('shipped'))}</b>`
+      + ` · taken off the job <b>${n0(t('offTo'))}</b> · salvaged ${n0(t('salvaged'))}`
+      + ` · returned ${n0(t('returned'))}`;
+  } else {
+    $('#x-prev').textContent = lots.length
+      ? `${n0(qty)} plants across ${n0(lots.length)} lots`
+        + (job === '*' ? `, ${n0(new Set(lots.map(l => l.job||HOLD)).size)} projects — one page each` : '')
+      : (kind === 'history' ? 'Every project, one page each.' : 'Nothing on hand for that project.');
+  }
+}
+
+function printProjectDoc(){
+  const job = $('#x-job').value || '*';
+  const kind = $('#x-kind').value;
+  const html = kind === 'history'
+    ? jobHistoryDoc(job, $('#x-group').value)
+    : projectDoc(job, $('#x-group').value);
+  if(!html) return toast('Nothing recorded for that project', 'bad');
+  $('#docsheet').innerHTML = html;
+  document.body.classList.add('pr-doc');
+  document.body.classList.remove('pr-tags');
+  window.print();
+  setTimeout(() => document.body.classList.remove('pr-doc'), 500);
+}
+
+function exportProjectCSV(){
+  const job = $('#x-job').value || '*';
+  if($('#x-kind').value === 'history') return exportJobHistoryCSV(job);
+  const lots = projectLots(job);
+  if(!lots.length) return toast('Nothing on hand for that project', 'bad');
+  const rows = [['Project','Botanical','Cultivar','Common name','Size','On hand',
+    'Block','Lot','Grower','Date received','In production','Price each','Value','Note']];
+  lots.slice().sort((a,b) =>
+    ((a.job||HOLD) === HOLD) - ((b.job||HOLD) === HOLD) ||
+    (a.job||HOLD).localeCompare(b.job||HOLD, undefined, {numeric:true}) || byName(a,b))
+    .forEach(l => rows.push([l.job||HOLD, l.bot, l.cult||'', l.com||'', l.size, l.qty,
+      l.loc||'', l.code, l.grower||'', l.received||'', l.prod?'yes':'', l.price||0,
+      (l.qty*(l.price||0)).toFixed(2), l.note||'']));
+  const tag = job === '*' ? 'all-projects' : job.toLowerCase().replace(/[^a-z0-9]+/g,'-');
+  download(`rexius-${tag}-${today()}.csv`, csv(rows));
+  toast(`${n0(lots.length)} lots exported`);
 }
 
 /* =====================================================================
@@ -3284,6 +3689,11 @@ function wire(){
   // yard
   ['#y-q','#y-group','#y-job','#y-loc','#y-size','#y-status'].forEach(s =>
     $(s).addEventListener('input', renderYard));
+  $('#y-clear').onclick = clearYardFilters;
+  // Escape in the search box clears everything, for the keyboard-minded.
+  $('#y-q').addEventListener('keydown', e => {
+    if(e.key === 'Escape'){ e.preventDefault(); clearYardFilters(); }
+  });
   $('#y-names').value = nameMode();
   $('#y-names').addEventListener('change', () => {
     if(!DB.pref) DB.pref = {};
@@ -3325,6 +3735,11 @@ function wire(){
     toast('History exported');
   };
 
+  // project sheets
+  ['#x-job','#x-kind','#x-group'].forEach(s => $(s).addEventListener('change', renderExportPanel));
+  $('#x-print').onclick = printProjectDoc;
+  $('#x-csv').onclick = exportProjectCSV;
+
   // archive
   ['#a-q','#a-job'].forEach(s => $(s).addEventListener('input', renderArchive));
   $('#a-csv').onclick = () => {
@@ -3341,7 +3756,10 @@ function wire(){
   // tags
   $('#t-print').onclick = () => {
     if(!DB.queue.length) return toast('Queue some tags first', 'bad');
+    document.body.classList.add('pr-tags');
+    document.body.classList.remove('pr-doc');
     window.print();
+    setTimeout(() => document.body.classList.remove('pr-tags'), 500);
   };
   $('#t-all').onclick = () => { DB.queue = live().map(l => l.id); save(); renderAll();
     toast(`${DB.queue.length} tags queued`); };
