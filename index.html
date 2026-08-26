@@ -703,7 +703,7 @@ const SIGNIN_SUFFIX = '@rexius.com';
 
 /* Shown in the bottom corner and on the Data tab. If the version on screen is
    not the one you just uploaded, the browser is serving an older copy. */
-const BUILD = '2026-08-26-ad';
+const BUILD = '2026-08-26-ae';
 /* =====================================================================
    ↑↑↑  nothing below here needs editing  ↑↑↑
    ===================================================================== */
@@ -1093,7 +1093,7 @@ function confirmProduction(lot, price, date, note){
 /* Correcting what a plant is called, rather than moving any of it. Nothing
    about the quantities changes; the ledger records what was altered so a
    later reader can tell a correction from a movement. */
-function editLot(lot, f, applyAll){
+function editLot(lot, f){
   const before = {bot:lot.bot, cult:lot.cult||'', com:lot.com||'', size:lot.size||'',
                   loc:lot.loc||'', grower:lot.grower||'', price:lot.price||0,
                   received:lot.received||'', note:lot.note||''};
@@ -1111,21 +1111,13 @@ function editLot(lot, f, applyAll){
       {date: today(), job: lot.job, loc: lot.loc});
     outbox({kind:'move', lot_id:lot.id, d_qty:d, event:ev});
   }
-  const nameChanged = f.bot !== before.bot || f.cult !== before.cult || f.com !== before.com;
   const targets = [lot];
-
-  if(applyAll && nameChanged){
-    const k = plantKey(before.bot, before.cult, before.com);
-    DB.lots.forEach(l => { if(l !== lot && plantKey(l.bot, l.cult, l.com) === k) targets.push(l); });
-  }
 
   targets.forEach(l => {
     const was = {bot:l.bot, cult:l.cult||'', com:l.com||'', size:l.size||'',
                  loc:l.loc||'', grower:l.grower||'', price:l.price||0,
                  received:l.received||'', note:l.note||''};
-    // Only the plant's name travels to the other lots; the rest is this lot's own.
-    const next = (l === lot) ? f : Object.assign({}, was,
-      {bot:f.bot, cult:f.cult, com:f.com});
+    const next = f;
 
     const changes = [];
     const label = {bot:'botanical name', cult:'cultivar', com:'common name',
@@ -2759,16 +2751,7 @@ function lotAction(kind){
       </div>
       <label class="f"><span>Note</span>
         <input type="text" id="f-note" value="${esc(l.note||'')}"></label>
-      ${(() => {
-        const k = plantKey(l.bot, l.cult, l.com);
-        const others = DB.lots.filter(x => x !== l && plantKey(x.bot, x.cult, x.com) === k).length;
-        return others ? `<label class="f" style="display:flex;gap:9px;align-items:flex-start">
-          <input type="checkbox" id="f-all" style="width:auto;min-height:0;margin-top:3px" checked>
-          <span style="text-transform:none;letter-spacing:0;font-size:13px;color:var(--basalt);
-            font-family:var(--body);font-weight:400">Apply the name change to the other
-            ${n0(others)} lot${others===1?'':'s'} filed under this name too — use this to fix a
-            spelling everywhere at once.</span></label>` : '';
-      })()}`,
+`,
     confirm: `<h2>Confirm job ready</h2>
       <p style="margin:0 0 14px;font-size:13.5px">${n0(l.qty)} × ${esc(l.size)} potted up from
         ${esc(l.prodFrom||'')} on ${dshow(l.prodStart)}. Enter what each one now costs with the
@@ -2867,13 +2850,12 @@ function commit(kind){
        !confirm(`Set ${l.code} to ${n0(newQty)}? A negative count usually means something `
          + `was shipped or written off without being recorded.`)) return;
     const was = l.qty;
-    const all = $('#f-all') ? $('#f-all').checked : false;
-    const n = editLot(l, {bot, cult: val('#f-cult'), com: val('#f-com'),
+    editLot(l, {bot, cult: val('#f-cult'), com: val('#f-com'),
       size: val('#f-size'), loc: val('#f-loc'), grower: val('#f-grow'),
-      price, received: val('#f-date'), note, qty: newQty}, all);
+      price, received: val('#f-date'), note, qty: newQty});
     toast(newQty !== was
       ? `${l.code} recounted at ${n0(newQty)}`
-      : (n > 1 ? `Corrected ${n0(n)} lots` : `${l.code} corrected`));
+      : `${l.code} corrected`);
   }
   if(kind === 'confirm'){
     const price = Number(val('#f-price'));
