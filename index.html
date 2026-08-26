@@ -206,6 +206,21 @@ th.r:last-child,td.r:last-child{padding-right:12px}
 .chip.job{background:#E8F0F5;border-color:#B4CBD9;color:var(--marker)}
 .chip.hold{background:#F1F0EA;border-color:var(--line);color:var(--grey)}
 .chip.out{background:#F6EEDF;border-color:#DEC79B;color:var(--bark)}
+.addlist{max-height:340px;overflow:auto;border:1px solid var(--line);border-radius:2px;
+  background:var(--white)}
+.addrow{display:flex;gap:10px;align-items:center;padding:8px 11px;
+  border-bottom:1px solid var(--hair)}
+.addrow:last-child{border-bottom:0}
+.addrow.on{background:#EEF3EC}
+.addrow .nm{flex:1;min-width:0;font-size:13px;line-height:1.3}
+.addrow .nm .sub{font-family:var(--mono);font-size:10.5px;color:var(--grey);display:block}
+.addrow .have{font-family:var(--mono);font-size:12px;color:var(--grey);
+  white-space:nowrap;text-align:right;width:82px}
+.addrow input[type=number]{width:96px;min-height:36px;padding:5px 8px}
+.addrow .all{background:none;border:1px solid var(--line);border-radius:2px;
+  padding:4px 7px;font-family:var(--mono);font-size:10.5px;cursor:pointer;white-space:nowrap}
+.addrow .all:hover{border-color:var(--chrome)}
+.addsum{display:flex;align-items:center;gap:10px;margin-top:10px;flex-wrap:wrap}
 .alloc-row{display:flex;gap:8px;align-items:flex-start;margin-bottom:8px}
 .alloc-row .q{width:110px;flex:none}
 .alloc-row .j{flex:1;min-width:0}
@@ -703,7 +718,7 @@ const SIGNIN_SUFFIX = '@rexius.com';
 
 /* Shown in the bottom corner and on the Data tab. If the version on screen is
    not the one you just uploaded, the browser is serving an older copy. */
-const BUILD = '2026-08-26-ae';
+const BUILD = '2026-08-26-af';
 /* =====================================================================
    ↑↑↑  nothing below here needs editing  ↑↑↑
    ===================================================================== */
@@ -2329,7 +2344,8 @@ function wireJobSelects(root){
 /* =====================================================================
    JOBS SCREEN
    ===================================================================== */
-let jobForm = null;      // {mode:'new'|'close'|'rename', name}
+let jobForm = null;      // {mode:'new'|'close'|'rename'|'add', name}
+let addPick = {};        // lot id -> quantity being taken for the job
 let showClosed = false;
 
 function renderJobs(){
@@ -2345,6 +2361,7 @@ function renderJobs(){
         s.blocks.length>5?` +${s.blocks.length-5}`:''}</td>
       <td class="num" style="font-size:11.5px">${dshow(isClosed?r.closed:(r.opened||s.first))}</td>
       <td class="r" style="white-space:nowrap">
+        ${isClosed ? '' : `<button class="btn sm" data-a="add" data-n="${esc(name)}">Add plants</button>`}
         ${isClosed
           ? `<button class="btn ghost sm" data-a="reopen" data-n="${esc(name)}">Reopen</button>`
           : `<button class="btn ghost sm" data-a="close" data-n="${esc(name)}">Close</button>`}
@@ -2381,6 +2398,7 @@ function renderJobs(){
     e.stopPropagation();
     const n = b.dataset.n;
     if(b.dataset.a === 'reopen'){ reopenJob(n); toast(`${n} reopened`); renderAll(); return; }
+    if(b.dataset.a === 'add') addPick = {};
     jobForm = {mode: b.dataset.a, name: n}; drawJobForm();
   });
   $$('#jobsBody tr[data-job]').forEach(tr => tr.onclick = e => {
@@ -2388,6 +2406,64 @@ function renderJobs(){
     showJobInYard(tr.dataset.job);
   });
   if(jobForm) drawJobForm();
+}
+
+/* Everything sitting unallocated, for pulling onto a job. */
+function unallocatedLots(q, block){
+  const t = String(q||'').trim().toLowerCase();
+  return DB.lots.filter(l => (l.job || HOLD) === HOLD && l.qty > 0 && !l.prod)
+    .filter(l => !block || l.loc === block)
+    .filter(l => !t || [l.code,l.bot,l.cult,l.com,l.size,l.loc,l.grower]
+      .join(' ').toLowerCase().includes(t))
+    .sort((a,b) => byName(a,b) ||
+      String(a.loc||'').localeCompare(String(b.loc||''), undefined, {numeric:true}));
+}
+
+function renderAddList(){
+  const box = $('#j-addlist'); if(!box) return;
+  const rows = unallocatedLots($('#j-addq').value, $('#j-addblk').value);
+  const CAP = 60;
+  box.innerHTML = rows.length ? rows.slice(0, CAP).map(l => {
+    const taking = addPick[l.id];
+    return `<div class="addrow ${taking?'on':''}" data-row="${l.id}">
+      <span class="nm">${nameHTML(l)}
+        <span class="sub">${esc(l.code)} · ${esc(l.size||'—')} · block ${esc(l.loc||'—')}${
+          l.grower?` · ${esc(l.grower)}`:''}</span></span>
+      <span class="have">${n0(l.qty)} free</span>
+      <input type="number" class="mono" min="0" max="${l.qty}" step="1"
+        placeholder="0" data-take="${l.id}" value="${taking === undefined ? '' : taking}">
+      <button type="button" class="all" data-allof="${l.id}">All</button>
+    </div>`;
+  }).join('') + (rows.length > CAP
+      ? `<div class="addrow" style="color:var(--grey);font-size:12px">
+         ${n0(rows.length - CAP)} more — narrow the search to see them.</div>` : '')
+    : `<div class="addrow" style="color:var(--grey);font-size:13px">
+       Nothing unallocated matches.</div>`;
+
+  $$('#j-addlist [data-take]').forEach(el => el.addEventListener('input', () => {
+    const l = lotById(el.dataset.take);
+    let v = Math.floor(Number(el.value) || 0);
+    if(v > l.qty){ v = l.qty; el.value = v; }
+    if(v > 0) addPick[l.id] = v; else delete addPick[l.id];
+    el.closest('.addrow').classList.toggle('on', v > 0);
+    updateAddSum();
+  }));
+  $$('#j-addlist [data-allof]').forEach(b => b.onclick = () => {
+    const l = lotById(b.dataset.allof);
+    addPick[l.id] = l.qty;
+    renderAddList(); updateAddSum();
+  });
+  updateAddSum();
+}
+
+function updateAddSum(){
+  const el = $('#j-addsum'); if(!el) return;
+  const ids = Object.keys(addPick);
+  const qty = ids.reduce((s,id) => s + addPick[id], 0);
+  el.innerHTML = ids.length
+    ? `<b>${n0(qty)}</b> plants from ${n0(ids.length)} lot${ids.length===1?'':'s'}`
+    : `<span style="color:var(--grey)">Nothing chosen yet</span>`;
+  const go = $('#j-go'); if(go) go.disabled = !ids.length;
 }
 
 function drawJobForm(){
@@ -2422,6 +2498,29 @@ function drawJobForm(){
         <label class="f"><span>Closing date</span><input type="date" id="j-date" class="mono" value="${today()}"></label>
         <label class="f"><span>Note</span><input type="text" id="j-note" placeholder="Why it's closing"></label>
       </div>`,
+    add: `<h2>Add plants to ${esc(f.name)}</h2>
+      <p style="margin:0 0 12px;font-size:13.5px;color:var(--grey)">Everything currently
+        ${esc(HOLD)}. Enter how many of each to put on this job — take part of a lot and it
+        splits, keeping both halves' history.</p>
+      <div class="grid g3">
+        <label class="f"><span>Search</span>
+          <input type="search" id="j-addq" placeholder="Name, size, block, grower…"></label>
+        <label class="f"><span>Block</span><select id="j-addblk">
+          <option value="">Every block</option>
+          ${uniqSorted(DB.lots.filter(l => (l.job||HOLD) === HOLD && l.qty > 0).map(l => l.loc))
+            .sort((a,b) => String(a).localeCompare(String(b), undefined, {numeric:true}))
+            .map(b => `<option>${esc(b)}</option>`).join('')}
+        </select></label>
+        <label class="f"><span>Put them in block</span>
+          <input type="text" id="j-addloc" list="dl-loc" placeholder="leave blank to keep where they are"></label>
+      </div>
+      <div class="addlist" id="j-addlist"></div>
+      <div class="addsum"><span id="j-addsum"></span></div>
+      <div class="grid g2" style="margin-top:12px">
+        <label class="f"><span>Date</span><input type="date" id="j-date" class="mono" value="${today()}"></label>
+        <label class="f"><span>Reason</span>
+          <input type="text" id="j-note" placeholder="Why these are going to this job"></label>
+      </div>`,
     rename: `<h2>Rename ${esc(f.name)}</h2>
       <p style="margin:0 0 14px;font-size:13.5px">Renaming onto a name that already exists merges the two.
         ${n0(s.lots)} lots and their history follow the new name.</p>
@@ -2430,7 +2529,8 @@ function drawJobForm(){
         <label class="f"><span>Date</span><input type="date" id="j-date" class="mono" value="${today()}"></label>
       </div>`
   }[f.mode];
-  const label = {new:'Open job', close:'Close job', rename:'Rename'}[f.mode];
+  const label = {new:'Open job', close:'Close job', rename:'Rename',
+    add:'Allocate to this job'}[f.mode];
   box.innerHTML = `<div class="card" style="margin-bottom:18px;border-color:var(--chrome)">
     ${body}<div class="err" id="j-err"></div>
     <div class="row" style="margin-top:6px">
@@ -2441,8 +2541,12 @@ function drawJobForm(){
   const mode = $('#j-mode');
   if(mode && mode.tagName === 'SELECT') mode.onchange = () =>
     $('#j-targetwrap').style.display = mode.value === 'move' ? '' : 'none';
-  $('#j-cancel').onclick = () => { jobForm = null; renderJobs(); };
+  $('#j-cancel').onclick = () => { jobForm = null; addPick = {}; renderJobs(); };
   $('#j-go').onclick = () => commitJob();
+  if(f.mode === 'add'){
+    ['#j-addq','#j-addblk'].forEach(s => $(s).addEventListener('input', renderAddList));
+    renderAddList();
+  }
 }
 
 function commitJob(){
@@ -2474,6 +2578,22 @@ function commitJob(){
     if(mode === 'move' && !target) return fail('Pick the job the stock is moving to.');
     closeJob(f.name, mode, target, date, v('#j-note'));
     toast(`${f.name} closed`);
+  }
+
+  if(f.mode === 'add'){
+    const ids = Object.keys(addPick);
+    if(!ids.length) return fail('Choose how many of at least one lot to allocate.');
+    const loc = v('#j-addloc'), note = v('#j-note');
+    let moved = 0, plants = 0;
+    ids.forEach(id => {
+      const l = lotById(id); if(!l) return;
+      const take = Math.min(addPick[id], l.qty);
+      if(take <= 0) return;
+      transfer(l, take, f.name, loc, date, note || `Allocated to ${f.name}`);
+      moved++; plants += take;
+    });
+    addPick = {};
+    toast(`${n0(plants)} plants from ${n0(moved)} lot${moved===1?'':'s'} now on ${f.name}`);
   }
 
   if(f.mode === 'rename'){
