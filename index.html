@@ -746,7 +746,7 @@ const SIGNIN_SUFFIX = '@rexius.com';
 
 /* Shown in the bottom corner and on the Data tab. If the version on screen is
    not the one you just uploaded, the browser is serving an older copy. */
-const BUILD = '2026-09-01-au';
+const BUILD = '2026-09-02-av';
 /* =====================================================================
    ↑↑↑  nothing below here needs editing  ↑↑↑
    ===================================================================== */
@@ -2879,32 +2879,51 @@ function renderShip(){
           : l.qty <= 0
           ? `<p style="margin:0 0 12px"><b>This lot is cleared out.</b> Open it in the yard to record a return.</p>
              <button class="btn ghost" id="s-open">Open lot</button>`
-          : (!l.job || l.job === HOLD)
-          ? `<p style="margin:0 0 12px"><b>${esc(HOLD)}.</b> Put it on a job before it leaves the yard.</p>
-             <button class="btn" id="s-open">Reallocate</button>`
-          : `<div class="grid g2">
+          : `${(!l.job || l.job === HOLD)
+                ? `<p style="margin:0 0 12px;font-size:13px;color:var(--grey)"><b>${esc(HOLD)}.</b>
+                     Name the job it is going to and it will be allocated and shipped together.</p>` : ''}
+             <div class="grid g2">
               <label class="f"><span>Quantity out</span>
                 <input type="number" id="s-qty" class="mono" min="1" max="${l.qty}" value="${l.qty}"></label>
-              <label class="f"><span>Date of transfer</span>
-                <input type="date" id="s-date" class="mono" value="${today()}"></label></div>
+              ${(!l.job || l.job === HOLD)
+                ? `<label class="f"><span>Shipping to</span>${jobSelectHTML('s-job', '', {blank:'Choose the job…'})}</label>`
+                : `<label class="f"><span>Date of transfer</span>
+                    <input type="date" id="s-date" class="mono" value="${today()}"></label>`}</div>
+             ${(!l.job || l.job === HOLD)
+               ? `<label class="f"><span>Date of transfer</span>
+                   <input type="date" id="s-date" class="mono" value="${today()}"></label>` : ''}
              <label class="f"><span>Note</span><input type="text" id="s-note" placeholder="Truck, crew, ticket…"></label>
              <div class="err" id="s-err"></div>
-             <div class="row"><button class="btn go" id="s-go">Ship ${n0(l.qty)} to ${esc(l.job)}</button>
+             <div class="row"><button class="btn go" id="s-go">Ship ${n0(l.qty)}${
+               (!l.job || l.job === HOLD) ? '' : ` to ${esc(l.job)}`}</button>
              <button class="btn ghost" id="s-open">Open lot</button></div>`}
       </div>`;
     if($('#s-open')) $('#s-open').onclick = () => openLot(l.id);
+    const held = (!l.job || l.job === HOLD);
     if($('#s-qty')) $('#s-qty').oninput = () => {
       const q = Number($('#s-qty').value) || 0;
-      $('#s-go').textContent = `Ship ${n0(q)} to ${l.job}`;
+      const to = held ? ($('#s-job') && $('#s-job').value !== '__new' ? $('#s-job').value : '') : l.job;
+      $('#s-go').textContent = `Ship ${n0(q)}` + (to && to !== HOLD ? ` to ${to}` : '');
     };
+    if($('#s-job')) { wireJobSelects('#s-panel');
+      $('#s-job').addEventListener('change', () => $('#s-qty').oninput()); }
     if($('#s-go')) $('#s-go').onclick = () => {
       const q = Number($('#s-qty').value);
+      const e = $('#s-err');
       if(!(q > 0) || q > l.qty){
-        const e = $('#s-err'); e.textContent = `Enter between 1 and ${n0(l.qty)}.`;
-        e.classList.add('on'); return;
+        e.textContent = `Enter between 1 and ${n0(l.qty)}.`; e.classList.add('on'); return;
       }
-      ship(l, q, $('#s-date').value || today(), $('#s-note').value.trim());
-      toast(`${n0(q)} shipped to ${l.job}`);
+      let target = l;
+      if(held){
+        const job = $('#s-job') ? $('#s-job').value : '';
+        if(!job || job === '__new' || job === HOLD){
+          e.textContent = 'Choose the job this is going to.'; e.classList.add('on'); return;
+        }
+        target = transfer(l, q, job, l.loc, $('#s-date').value || today(),
+          $('#s-note').value.trim() || `Allocated on shipping to ${job}`);
+      }
+      ship(target, q, $('#s-date').value || today(), $('#s-note').value.trim());
+      toast(`${n0(q)} shipped to ${target.job}`);
       shipLot = null; $('#s-code').value = ''; renderAll(); $('#s-code').focus();
     };
   }
@@ -3261,12 +3280,24 @@ function lotAction(kind){
   if(kind === 'receive'){ closeDrawer(); receiveLike(l); return; }
 
   const forms = {
-    ship: () => `<h2>Ship to ${esc(l.job||HOLD)}</h2>
+    ship: () => {
+      const held = (l.job || HOLD) === HOLD;
+      return `<h2>Ship ${held ? 'out' : `to ${esc(l.job)}`}</h2>
+      ${held ? `<p style="margin:0 0 12px;font-size:13px;color:var(--grey)">This lot is
+        ${esc(HOLD)}. Name the job it is going to — it is put on that job and shipped in one
+        step, so the job's history shows it arriving as well as leaving.</p>` : ''}
       <div class="grid g2">
-        <label class="f"><span>Quantity out</span><input type="number" id="f-qty" class="mono" min="1" max="${l.qty}" value="${l.qty}"></label>
-        <label class="f"><span>Date of transfer</span><input type="date" id="f-date" class="mono" value="${today()}"></label>
+        <label class="f"><span>Quantity out</span>
+          <input type="number" id="f-qty" class="mono" min="1" max="${l.qty}" value="${l.qty}"></label>
+        ${held
+          ? `<label class="f"><span>Shipping to</span>${jobSelectHTML('f-job', '', {blank:'Choose the job…'})}</label>`
+          : `<label class="f"><span>Date of transfer</span>
+              <input type="date" id="f-date" class="mono" value="${today()}"></label>`}
       </div>
-      <label class="f"><span>Note</span><input type="text" id="f-note" placeholder="Truck, crew, delivery ticket…"></label>`,
+      ${held ? `<label class="f"><span>Date of transfer</span>
+        <input type="date" id="f-date" class="mono" value="${today()}"></label>` : ''}
+      <label class="f"><span>Note</span><input type="text" id="f-note" placeholder="Truck, crew, delivery ticket…"></label>`;
+    },
 
     transfer: () => `<h2>Reallocate</h2>
       <p style="margin:0 0 12px;font-size:13px;color:var(--grey)">Currently on
@@ -3432,11 +3463,19 @@ function commit(kind){
   }
 
   if(kind === 'ship'){
-    if(l.prod) return fail('This lot is still in production. Confirm it job ready first.');
-    if(!l.job || l.job === HOLD)
-      return fail(`This lot is ${HOLD}. Put it on a job first.`);
-    ship(l, qty, date, note);
-    toast(`${n0(qty)} shipped to ${l.job}`);
+    if(l.prod) return fail('This lot is still in production. Finish the run first.');
+    let target = l;
+    if((l.job || HOLD) === HOLD){
+      const job = val('#f-job');
+      if(!job || job === '__new' || job === HOLD)
+        return fail('Choose the job this is going to.');
+      // Put it on the job first, so the job's history shows it arriving and
+      // leaving rather than stock appearing from nowhere on a delivery note.
+      target = transfer(l, qty, job, l.loc, date, note || `Allocated on shipping to ${job}`);
+    }
+    ship(target, qty, date, note);
+    toast(`${n0(qty)} shipped to ${target.job}`);
+    drawerLot = target; $('#dtitle').textContent = target.code;
   }
 
   if(kind === 'transfer'){
