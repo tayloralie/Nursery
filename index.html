@@ -746,7 +746,7 @@ const SIGNIN_SUFFIX = '@rexius.com';
 
 /* Shown in the bottom corner and on the Data tab. If the version on screen is
    not the one you just uploaded, the browser is serving an older copy. */
-const BUILD = '2026-09-02-av';
+const BUILD = '2026-09-24-ay';
 /* =====================================================================
    ↑↑↑  nothing below here needs editing  ↑↑↑
    ===================================================================== */
@@ -1095,15 +1095,17 @@ function salvage(lot, qty, reason, date, note){
 /* Production: stepping a plant up a pot size. The smaller stock leaves
    inventory and a new lot is born at the new size, tagged In-Production
    until someone confirms it is job ready and prices the labour in. */
-function produce(lot, qty, newSize, date, note, cost, toJob){
+function produce(lot, qty, newSize, date, note, cost, toJob, out){
   const fromJob = lot.job || HOLD;
   const unit = lot.price || 0;            // what the stock stood at before
   lot.qty -= qty;
 
+  const made = Math.max(0, Math.floor(Number(out)) || qty);   // plants expected out
   const kids = DB.lots.filter(l => l.parent === lot.code).length;
   const child = Object.assign({}, lot, {
     id: uid(), code: `${lot.code}.${kids+1}`, parent: lot.code,
-    size: newSize, qtyIn: qty, qty, shipped: 0, lost: 0,
+    size: newSize, qtyIn: made, qty: made, shipped: 0, lost: 0,
+    prodIn: qty,               // source plants consumed, which may be fewer
     prod: true, prodFrom: lot.size, prodStart: date || today(),
     prodCost: Number(cost) || 0,   // expected at the start, settled at the end
     prodValue: 0,                  // only known once it is finished
@@ -1116,8 +1118,11 @@ function produce(lot, qty, newSize, date, note, cost, toJob){
   });
   DB.lots.unshift(child);
 
+  const how = made === qty ? `${lot.size} becoming ${newSize}`
+    : made > qty ? `${n0(qty)} × ${lot.size} divided into ${n0(made)} × ${newSize}`
+    : `${n0(qty)} × ${lot.size} combined into ${n0(made)} × ${newSize}`;
   const evP = logEvent(lot, 'PRODUCE', qty,
-    `${n0(qty)} pulled for production — ${lot.size} stepping up to ${newSize} as ${child.code}`,
+    `${n0(qty)} pulled for production — ${how} as ${child.code}`,
     {date, job: fromJob, loc: lot.loc, note});
 
   /* The job that gave the stock up is credited what it paid for it, so its
@@ -1127,8 +1132,9 @@ function produce(lot, qty, newSize, date, note, cost, toJob){
       + `returned to the job when they went into production as ${child.code}`,
     {date, job: fromJob, loc: lot.loc, value: qty * unit, note});
 
-  const evC = logEvent(child, 'PRODUCE', qty,
-    `Potted up from ${lot.size} out of ${lot.code}`
+  const evC = logEvent(child, 'PRODUCE', made,
+    `${made === qty ? 'Potted up' : made > qty ? 'Divided' : 'Combined'} from `
+      + `${n0(qty)} × ${lot.size} out of ${lot.code}`
       + (cost ? ` at an expected ${money(cost)} each to convert` : '')
       + (toJob && toJob !== HOLD ? `, set aside for ${toJob}` : ''),
     {date, job: child.job, loc: child.loc, parent: lot.code, from: fromJob, note,
@@ -1148,7 +1154,7 @@ function produce(lot, qty, newSize, date, note, cost, toJob){
 /* Coming out the other end: the real count, the real cost, what it is now
    worth, and which job it is going onto. */
 function finishProduction(lot, qty, cost, value, toJob, loc, date, note){
-  const started = lot.qtyIn;
+  const started = lot.qtyIn;          // what the run expected to yield
   const d = qty - lot.qty;
   const job = toJob || HOLD;
 
@@ -1164,15 +1170,16 @@ function finishProduction(lot, qty, cost, value, toJob, loc, date, note){
   const lost = started - qty;
   const ev = logEvent(lot, 'CONFIRM', qty,
     `Production finished — ${n0(qty)} × ${lot.size} job ready`
-      + (lost > 0 ? `, ${n0(lost)} lost on the way from ${n0(started)}` : '')
-      + (lost < 0 ? `, ${n0(-lost)} more than the ${n0(started)} started` : '')
+      + (lot.prodIn && lot.prodIn !== qty ? ` from ${n0(lot.prodIn)} × ${lot.prodFrom}` : '')
+      + (lost > 0 ? `, ${n0(lost)} short of the ${n0(started)} expected` : '')
+      + (lost < 0 ? `, ${n0(-lost)} more than the ${n0(started)} expected` : '')
       + ` · ${money(lot.prodCost)} each to convert, now worth ${money(lot.price)} each`
       + ` · allocated to ${job}`,
     {date, job, loc: lot.loc, note, value: qty * lot.price});
 
   outbox({kind:'move', lot_id:lot.id, d_qty:d, event:ev,
     set:{prod:false, price:lot.price, ready:'Yes', job, loc:lot.loc,
-         prodCost:lot.prodCost, prodValue:lot.prodValue}});
+         prodIn:lot.prodIn||0, prodCost:lot.prodCost, prodValue:lot.prodValue}});
   ensureJob(job);
   save();
   return lot;
@@ -1462,7 +1469,7 @@ const toRow = l => ({id:l.id, code:l.code, parent:l.parent||'', kind:l.kind||'P'
   loc:l.loc||'', credit:l.credit||'', ready:l.ready||'', grower:l.grower||'',
   price:l.price||0, received:l.received||'', qtyIn:l.qtyIn||0, qty:l.qty||0,
   shipped:l.shipped||0, lost:l.lost||0, prod:!!l.prod, prodFrom:l.prodFrom||'',
-  prodStart:l.prodStart||'', prodCost:l.prodCost||0, prodValue:l.prodValue||0,
+  prodStart:l.prodStart||'', prodIn:l.prodIn||0, prodCost:l.prodCost||0, prodValue:l.prodValue||0,
   prodCredit:l.prodCredit||0, prodJob:l.prodJob||'', note:l.note||''});
 
 const fromRow = r => ({id:r.id, code:r.code, parent:r.parent||'', kind:r.kind||'P',
@@ -1470,7 +1477,7 @@ const fromRow = r => ({id:r.id, code:r.code, parent:r.parent||'', kind:r.kind||'
   loc:r.loc||'', credit:r.credit||'', ready:r.ready||'', grower:r.grower||'',
   price:Number(r.price)||0, received:r.received||'', qtyIn:r.qty_in||0, qty:r.qty||0,
   shipped:r.shipped||0, lost:r.lost||0, prod:!!r.prod, prodFrom:r.prod_from||'',
-  prodStart:r.prod_start||'', prodCost:Number(r.prod_cost)||0,
+  prodStart:r.prod_start||'', prodIn:Number(r.prod_in)||0, prodCost:Number(r.prod_cost)||0,
   prodValue:Number(r.prod_value)||0, prodCredit:Number(r.prod_credit)||0,
   prodJob:r.prod_job||'', note:r.note||'', created:r.created});
 
@@ -2099,6 +2106,14 @@ function yardLots(){
   const q = $('#y-q').value.trim().toLowerCase();
   const fj = $('#y-job').value, fl = $('#y-loc').value;
   const fs = $('#y-size').value, st = $('#y-status').value;
+
+  // Searching a lot code outright always finds it, cleared out or not — the
+  // filters are for browsing, not for hiding something you asked for by name.
+  if(q){
+    const exact = DB.lots.find(l => l.code.toLowerCase() === q);
+    if(exact) return [exact];
+  }
+
   return DB.lots.filter(l => {
     if(st === 'live' && l.qty <= 0) return false;
     if(st === 'gone' && l.qty !== 0) return false;
@@ -2181,9 +2196,33 @@ function renderYard(){
     ${prod?`<div><span class="k">In production</span><span class="v" style="color:var(--bark)">${n0(prod)}</span></div>`:''}
   </div>`;
 
+  // A lot shipped to zero drops out of the default view. Rather than leave
+  // people hunting the filters, count them and offer them.
+  let alsoCleared = '';
+  if($('#y-status').value === 'live'){
+    const fj = $('#y-job').value, fl = $('#y-loc').value, fs = $('#y-size').value;
+    const q = $('#y-q').value.trim().toLowerCase();
+    const cleared = DB.lots.filter(l => l.qty === 0
+      && (!fj || (l.job || HOLD) === fj)
+      && (!fl || l.loc === fl)
+      && (!fs || l.size === fs)
+      && (!q || [l.code,l.bot,l.cult,l.com,l.size,l.job,l.loc,l.grower].join(' ').toLowerCase().includes(q)));
+    if(cleared.length)
+      alsoCleared = `<p class="hint" style="margin-top:10px">${n0(cleared.length)}
+        lot${cleared.length===1?'' :'s'} here ${cleared.length===1?'has':'have'} been cleared out.
+        <a href="#" id="y-showgone">Show them</a> to open or edit one.</p>`;
+  }
+
   $('#yardBody').innerHTML = strip + ({
     lot: yardByLot, plant: yardByPlant, loc: yardByGroup, job: yardByGroup
-  }[group])(rows, group);
+  }[group])(rows, group) + alsoCleared;
+
+  const sg = $('#y-showgone');
+  if(sg) sg.onclick = e => {
+    e.preventDefault();
+    $('#y-status').value = 'all';
+    renderYard();
+  };
 
   $$('#yardBody tr[data-id]').forEach(tr => tr.onclick = e => {
     if(e.target.closest('button') || e.target.closest('a')) return;
@@ -2221,8 +2260,8 @@ function yardByLot(rows){
   const CAP = 300, m = priced();
   return `<div class="tw"><table><thead><tr>
     <th>Lot</th><th>Plant</th><th>Cultivar</th><th>Common name</th>
-    <th>Size</th><th class="r">On hand</th>
-    <th>Project</th><th>Block</th><th>Status</th><th>Received</th>
+    <th>Size</th><th class="r">Received</th><th class="r">On hand</th>
+    <th>Project</th><th>Block</th><th>Status</th><th>Date in</th>
     ${m?'<th class="r">Value</th>':''}<th></th>
   </tr></thead><tbody>${rows.slice(0,CAP).map(l => `<tr data-id="${l.id}" class="${l.qty<0?'warn':''}">
     <td class="num" style="white-space:nowrap">${esc(l.code)}</td>
@@ -2230,9 +2269,13 @@ function yardByLot(rows){
     <td><span class="cult">${l.cult?'\u2018'+esc(l.cult)+'\u2019':''}</span></td>
     <td><span class="com2">${esc(l.com||'')}</span></td>
     <td class="num">${esc(l.size)}</td>
+    <td class="r num" style="color:var(--grey)">${n0(l.qtyIn)}</td>
     <td class="r num"><b${l.qty<0?' style="color:var(--rust)"':''}>${n0(l.qty)}</b>${
-      l.qty > 0 && l.qty !== l.qtyIn
-        ? `<br><span style="font-size:10px;color:var(--grey)">of ${n0(l.qtyIn)}</span>` : ''}</td>
+      l.qty !== l.qtyIn
+        ? `<br><span style="font-size:10px;color:var(--grey)">${
+            [l.shipped?n0(l.shipped)+' out':'', l.lost?n0(l.lost)+' lost':'']
+              .filter(Boolean).join(', ') || n0(l.qtyIn - l.qty) + ' gone'}</span>`
+        : ''}</td>
     <td><a href="#" class="jobfilter" data-jobfilter="${esc(l.job||HOLD)}"><span class="chip ${
       (!l.job||l.job===HOLD)?'hold':'job'}">${esc(l.job||HOLD)}</span></a></td>
     <td class="num">${esc(l.loc||'—')}</td>
@@ -2252,9 +2295,10 @@ function yardByPlant(rows){
   rows.forEach(l => {
     const k = lotKey(l);
     let r = m.get(k);
-    if(!r){ r = {bot:l.bot, cult:l.cult, com:l.com, lots:[], qty:0, unalloc:0, prod:0,
-                 jobs:new Set(), locs:new Set(), sizes:new Set(), cleared:0}; m.set(k, r); }
+    if(!r){ r = {bot:l.bot, cult:l.cult, com:l.com, lots:[], qty:0, received:0, unalloc:0,
+                 prod:0, jobs:new Set(), locs:new Set(), sizes:new Set(), cleared:0}; m.set(k, r); }
     r.lots.push(l);
+    r.received += l.qtyIn || 0;
     if(!r.com && l.com) r.com = l.com;      // any lot of this plant can supply it
     if(l.qty > 0){
       r.qty += l.qty;
@@ -2268,7 +2312,8 @@ function yardByPlant(rows){
   const list = Array.from(m.entries()).sort((a,b) => byName(a[1], b[1])
     || (a[1].com||'').localeCompare(b[1].com||''));
   return `<div class="tw"><table><thead><tr>
-    <th>Plant</th><th>Cultivar</th><th>Common name</th><th>Sizes</th><th class="r">On hand</th>
+    <th>Plant</th><th>Cultivar</th><th>Common name</th><th>Sizes</th>
+    <th class="r">Received</th><th class="r">On hand</th>
     <th class="r">On projects</th><th class="r">${esc(HOLD)}</th><th>Projects</th><th>Blocks</th>
   </tr></thead><tbody>${list.map(([k,r]) => {
     const open = openRows.has('p:'+k);
@@ -2279,6 +2324,7 @@ function yardByPlant(rows){
       <td><span class="cult" style="font-size:14px">${r.cult?'\u2018'+esc(r.cult)+'\u2019':'—'}</span></td>
       <td><span class="com2">${esc(r.com||'—')}</span></td>
       <td class="num" style="font-size:11.5px">${Array.from(r.sizes).sort().join(', ')||'—'}</td>
+      <td class="r num" style="color:var(--grey)">${n0(r.received||0)}</td>
       <td class="r num"><b>${n0(r.qty)}</b>${r.prod?`<br><span class="chip prod">${n0(r.prod)} in prod</span>`:''}</td>
       <td class="r num">${r.qty-r.unalloc?n0(r.qty-r.unalloc):'—'}</td>
       <td class="r num">${r.unalloc?`<b>${n0(r.unalloc)}</b>`:'—'}</td>
@@ -2287,7 +2333,7 @@ function yardByPlant(rows){
       <td class="num" style="font-size:11.5px">${locs.slice(0,4).join(' ')||'—'}${
         locs.length>4?` +${locs.length-4}`:''}</td>
     </tr>
-    ${open?`<tr class="exp"><td colspan="9"><div class="inner">${splitTable(r)}</div></td></tr>`:''}`;
+    ${open?`<tr class="exp"><td colspan="10"><div class="inner">${splitTable(r)}</div></td></tr>`:''}`;
   }).join('')}</tbody></table></div>`;
 }
 
@@ -2340,12 +2386,13 @@ function splitTable(r){
   return `<div class="row" style="margin-bottom:10px">
       <button class="btn ghost sm" data-recv="${live[0].id}">Receive more of this</button></div>
     <table><thead><tr><th>Project</th><th>Size</th><th>Block</th>
-      <th class="r">On hand</th><th>Lot</th><th></th></tr></thead>
+      <th class="r">Received</th><th class="r">On hand</th><th>Lot</th><th></th></tr></thead>
     <tbody>${live.map(l => `<tr data-id="${l.id}">
       <td><a href="#" class="jobfilter" data-jobfilter="${esc(l.job||HOLD)}"><span class="chip ${
         (l.job||HOLD)===HOLD?'hold':'job'}">${esc(l.job||HOLD)}</span></a></td>
       <td class="num">${esc(l.size||'—')}</td>
       <td class="num">${esc(l.loc||'—')}</td>
+      <td class="r num" style="color:var(--grey)">${n0(l.qtyIn)}</td>
       <td class="r num"><b>${n0(l.qty)}</b>${l.prod?` <span class="chip prod">in prod</span>`:''}</td>
       <td class="num" style="font-size:11px">${esc(l.code)}</td>
       <td class="r"><button class="btn ghost sm" data-move="${l.id}">Edit</button></td>
@@ -2360,7 +2407,7 @@ function groupTable(r, mode){
   return `<table><thead><tr>
     <th>Plant</th><th>Cultivar</th><th>Common name</th><th>Size</th>
     <th>${mode==='loc'?'Project':'Block'}</th>
-    <th class="r">On hand</th><th>Lot</th><th></th></tr></thead>
+    <th class="r">Received</th><th class="r">On hand</th><th>Lot</th><th></th></tr></thead>
     <tbody>${live.slice(0,120).map(l => `<tr data-id="${l.id}">
       <td><span class="bot">${esc(l.bot)}</span></td>
       <td><span class="cult">${l.cult?'\u2018'+esc(l.cult)+'\u2019':''}</span></td>
@@ -2370,6 +2417,7 @@ function groupTable(r, mode){
         ? `<a href="#" class="jobfilter" data-jobfilter="${esc(l.job||HOLD)}"><span class="chip ${
             (l.job||HOLD)===HOLD?'hold':'job'}">${esc(l.job||HOLD)}</span></a>`
         : `<span class="num">${esc(l.loc||'—')}</span>`}</td>
+      <td class="r num" style="color:var(--grey)">${n0(l.qtyIn)}</td>
       <td class="r num"><b>${n0(l.qty)}</b>${l.prod?` <span class="chip prod">in prod</span>`:''}</td>
       <td class="num" style="font-size:11px">${esc(l.code)}</td>
       <td class="r"><button class="btn ghost sm" data-move="${l.id}">Edit</button></td>
@@ -2977,11 +3025,11 @@ function renderProduction(){
   }
   const open = rows.filter(l => l.prod), done = rows.filter(l => !l.prod);
   const qty = open.reduce((s,l) => s + l.qty, 0);
-  const credited = open.reduce((s,l) => s + l.qtyIn * (l.prodCredit||0), 0);
+  const credited = open.reduce((s,l) => s + (l.prodIn || l.qtyIn) * (l.prodCredit||0), 0);
   const openCost = open.reduce((s,l) => s + l.qty * (l.prodCost||0), 0);
   // Cost and value are only real once a lot has been finished.
   const dQty = done.reduce((s,l) => s + l.qty, 0);
-  const dCredit = done.reduce((s,l) => s + l.qtyIn * (l.prodCredit||0), 0);
+  const dCredit = done.reduce((s,l) => s + (l.prodIn || l.qtyIn) * (l.prodCredit||0), 0);
   const dCost = done.reduce((s,l) => s + l.qty * (l.prodCost||0), 0);
   const dValue = done.reduce((s,l) => s + l.qty * (l.prodValue||l.price||0), 0);
 
@@ -3001,7 +3049,7 @@ function renderProduction(){
     </div>
     <div class="tw"><table><thead><tr>
       <th>Lot</th><th>Plant</th><th>Cultivar</th>
-      <th>From</th><th>To</th><th class="r">Qty</th>
+      <th>From</th><th>To</th><th class="r">In</th><th class="r">Out</th>
       <th>Block</th><th>Credited from</th><th>Allocated to</th>
       <th class="r">Credit each</th><th class="r">Cost each</th><th class="r">Value each</th>
       <th>Started</th><th>Status</th><th></th>
@@ -3011,7 +3059,15 @@ function renderProduction(){
       <td><span class="cult">${l.cult?'\u2018'+esc(l.cult)+'\u2019':''}</span></td>
       <td class="num">${esc(l.prodFrom||'—')}</td>
       <td class="num"><b>${esc(l.size||'—')}</b></td>
-      <td class="r num"><b>${n0(l.qty)}</b>${l.qty!==l.qtyIn?`<br><span style="font-size:10px;color:var(--grey)">of ${n0(l.qtyIn)}</span>`:''}</td>
+      <td class="r num">${n0(l.prodIn || l.qtyIn)}</td>
+      <td class="r num"><b>${n0(l.qty)}</b>${
+        l.prod && l.prodIn && l.prodIn !== l.qtyIn
+          ? `<br><span style="font-size:10px;color:var(--grey)">${
+              l.qtyIn > l.prodIn
+                ? `${(l.qtyIn/l.prodIn).toFixed(l.qtyIn % l.prodIn ? 1 : 0)} per plant`
+                : `${(l.prodIn/l.qtyIn).toFixed(l.prodIn % l.qtyIn ? 1 : 0)} into 1`}</span>`
+          : (!l.prod && l.qty !== l.qtyIn
+              ? `<br><span style="font-size:10px;color:var(--grey)">of ${n0(l.qtyIn)}</span>` : '')}</td>
       <td class="num">${esc(l.loc||'—')}</td>
       <td>${l.prodJob?`<span class="chip ${l.prodJob===HOLD?'hold':'job'}">${esc(l.prodJob)}</span>`:'—'}</td>
       <td><span class="chip ${(l.job||HOLD)===HOLD?'hold':'job'}">${esc(l.job||HOLD)}</span></td>
@@ -3210,6 +3266,11 @@ function drawLot(form){
     ${l.prod?`<div class="note-strip" style="background:#F9F2E6;border-color:#DEC79B;border-left-color:var(--bark)">
       <b>In production</b><br>Potted up from ${esc(l.prodFrom||'')} on ${dshow(l.prodStart)}.
       It can't ship until someone confirms it is job ready and enters the finished cost.</div>`:''}
+    ${(!l.prod && l.qty === 0) ? `<div class="note-strip" style="background:var(--paper);
+      border-color:var(--line);border-left-color:var(--grey)">
+      <b>Cleared out</b><br>Nothing left on hand${l.shipped?` — ${n0(l.shipped)} shipped`:''}${
+        l.lost?`, ${n0(l.lost)} salvaged`:''}. The details can still be corrected, and stock
+        coming back off site can be returned here.</div>` : ''}
     ${tagHTML(l)}
     <div class="row" style="margin:16px 0 4px">
       ${l.prod
@@ -3332,12 +3393,20 @@ function lotAction(kind){
       <label class="f"><span>Put it in</span><input type="text" id="f-loc" list="dl-loc" value="${esc(l.loc)}"></label>
       <label class="f"><span>Note</span><input type="text" id="f-note" placeholder="Overstock, wrong spec, job cancelled…"></label>`,
 
-    produce: () => `<h2>Step up to a bigger pot</h2>
-      <div class="grid g2">
-        <label class="f"><span>Quantity to pot up</span>
-          <input type="number" id="f-qty" class="mono" min="1" max="${l.qty}" value="${l.qty}"></label>
+    produce: () => `<h2>Production run</h2>
+      <p style="margin:0 0 12px;font-size:13px;color:var(--grey)">Pot up, divide, or combine.
+        A 1g can become one 2g, or be split into several 4in — enter what goes in and what
+        comes out.</p>
+      <div class="grid g3">
+        <label class="f"><span>Plants in</span>
+          <input type="number" id="f-qty" class="mono" min="1" max="${l.qty}" value="${l.qty}">
+          <div class="hint">From ${n0(l.qty)} × ${esc(l.size||'—')} on hand.</div></label>
+        <label class="f"><span>Plants out</span>
+          <input type="number" id="f-out" class="mono" min="1" value="${l.qty}">
+          <div class="hint" id="f-ratio">One for one.</div></label>
         <label class="f"><span>New size</span>
-          <input type="text" id="f-size" list="dl-size" placeholder="e.g. 2g" autocomplete="off"></label>
+          <input type="text" id="f-size" list="dl-size" placeholder="e.g. 2g or 4in" autocomplete="off">
+          <div class="hint">Bigger, smaller, or the same.</div></label>
       </div>
       <div class="grid g2">
         <label class="f"><span>Cost each to convert</span>
@@ -3356,12 +3425,14 @@ function lotAction(kind){
         gives up. What the plant is worth afterwards is entered when you finish the run.</p>`,
 
     confirm: () => `<h2>Finish production</h2>
-      <p style="margin:0 0 14px;font-size:13.5px">${n0(l.qtyIn)} × ${esc(l.prodFrom||'')} went in on
-        ${dshow(l.prodStart)} to become ${esc(l.size)}.</p>
+      <p style="margin:0 0 14px;font-size:13.5px">${n0(l.prodIn || l.qtyIn)} ×
+        ${esc(l.prodFrom||'')} went in on ${dshow(l.prodStart)}${
+        (l.prodIn && l.prodIn !== l.qtyIn) ? `, expected to yield ${n0(l.qtyIn)}` : ''}
+        × ${esc(l.size)}.</p>
       <div class="grid g2">
         <label class="f"><span>Quantity produced</span>
           <input type="number" id="f-qty" class="mono" min="0" step="1" value="${l.qty}">
-          <div class="hint">${n0(l.qtyIn)} started. Enter fewer if some were lost potting up.</div></label>
+          <div class="hint">${n0(l.qtyIn)} expected. Enter what actually came out.</div></label>
         <label class="f"><span>Date finished</span>
           <input type="date" id="f-date" class="mono" value="${today()}"></label>
       </div>
@@ -3441,6 +3512,20 @@ function lotAction(kind){
         kind==='return'&&!l.shipped?'disabled':''}>${esc(labels[kind])}</button>
       <button class="btn ghost" id="f-cancel">Cancel</button></div></div>`;
   wireJobSelects('#dform');
+  if(kind === 'produce'){
+    const tell = () => {
+      const a = Math.floor(Number($('#f-qty').value) || 0);
+      const b = Math.floor(Number($('#f-out').value) || 0);
+      const el = $('#f-ratio'); if(!el) return;
+      if(!a || !b) return el.textContent = '';
+      el.textContent = b === a ? 'One for one.'
+        : b > a ? `Dividing — ${(b/a).toFixed(b % a ? 2 : 0)} out of each plant.`
+        : `Combining — ${(a/b).toFixed(a % b ? 2 : 0)} plants into each one.`;
+      el.style.color = b === a ? '' : 'var(--rex-dk)';
+    };
+    ['#f-qty','#f-out'].forEach(s => $(s).addEventListener('input', tell));
+    tell();
+  }
   const df = $('#dform');
   if(df.scrollIntoView) df.scrollIntoView({behavior:'smooth', block:'nearest'});
   $('#f-cancel').onclick = () => $('#dform').innerHTML = '';
@@ -3499,15 +3584,21 @@ function commit(kind){
 
   if(kind === 'produce'){
     const size = val('#f-size');
-    if(!size) return fail('Name the size it is stepping up to.');
-    if(size.toLowerCase() === (l.size||'').toLowerCase())
-      return fail('That is the size it already is.');
+    if(!size) return fail('Name the size that comes out.');
+    const out = Math.floor(Number(val('#f-out')));
+    if(!(out > 0)) return fail('Enter how many plants come out.');
+    if(out === qty && size.toLowerCase() === (l.size||'').toLowerCase())
+      return fail('Same size and same count — nothing would change. '
+        + 'Change the size, or the number coming out.');
     const cost = val('#f-cost') === '' ? 0 : Number(val('#f-cost'));
     if(!(cost >= 0)) return fail('Cost each must be a number, or left blank.');
     const toJob = val('#f-job');
     if(toJob === '__new') return fail('Choose where the run is going.');
-    const c = produce(l, qty, size, date, note, cost, toJob || HOLD);
-    toast(`${n0(qty)} into production as ${size} — ${money(qty*(l.prodCredit||0))} credited to ${c.prodJob}`);
+    const unit = l.price || 0;
+    const c = produce(l, qty, size, date, note, cost, toJob || HOLD, out);
+    toast(out === qty
+      ? `${n0(qty)} into production as ${size} — ${money(qty*unit)} credited to ${c.prodJob}`
+      : `${n0(qty)} × ${l.size} into ${n0(out)} × ${size} — ${money(qty*unit)} credited to ${c.prodJob}`);
     drawerLot = c; $('#dtitle').textContent = c.code;
   }
 
@@ -4387,11 +4478,11 @@ function wire(){
   ['#x2-q','#x2-show'].forEach(s => $(s).addEventListener('input', renderProduction));
   $('#x2-csv').onclick = () => {
     const rows = [['Lot','From lot','Botanical','Cultivar','Common name','From size','To size',
-      'Started','Quantity in','Quantity now','Credited to','Credit each','Credit total',
+      'Started','Plants in','Expected out','Quantity now','Credited to','Credit each','Credit total',
       'Cost each','Cost total','Value each','Value total','Block','Status','Allocated to']];
     prodRows().forEach(l => rows.push([l.code, l.parent||'', l.bot, l.cult||'', l.com||'',
-      l.prodFrom||'', l.size, l.prodStart||'', l.qtyIn, l.qty, l.prodJob||'',
-      (l.prodCredit||0).toFixed(2), (l.qtyIn*(l.prodCredit||0)).toFixed(2),
+      l.prodFrom||'', l.size, l.prodStart||'', l.prodIn||l.qtyIn, l.qtyIn, l.qty, l.prodJob||'',
+      (l.prodCredit||0).toFixed(2), ((l.prodIn||l.qtyIn)*(l.prodCredit||0)).toFixed(2),
       (l.prodCost||0).toFixed(2), (l.qty*(l.prodCost||0)).toFixed(2),
       (l.prodValue||l.price||0).toFixed(2), (l.qty*(l.prodValue||l.price||0)).toFixed(2),
       l.loc||'', l.prod?'In production':'Finished', l.prod?'':(l.job||HOLD)]));
